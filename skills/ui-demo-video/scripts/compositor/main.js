@@ -85,6 +85,9 @@ async function run() {
     if (sc.type === 'split') return { before: { src: sc.before.src, trim: sc.before.trimStartSec ?? 0, rate: 1 }, after: { src: sc.after.src, trim: sc.after.trimStartSec ?? 0, rate: 1 } };
     return {};
   };
+  // After the last scene that plays a file, let its bytes go.
+  const lastUse = {};
+  spec.scenes.forEach((sc, i) => Object.values(needs(sc)).forEach((d) => { lastUse[d.src] = i; }));
   const rt = spec.scenes.map(() => ({ opened: null, src: {}, tex: {}, closed: false }));
   const openScene = (i, atFrame) => {
     const r = rt[i];
@@ -102,6 +105,7 @@ async function run() {
     const r = rt[i];
     if (r.closed) return;
     r.closed = true;
+    for (const d of Object.values(needs(spec.scenes[i]))) if (lastUse[d.src] === i) dropFile(m.clips[d.src].url);
     for (const s of Object.values(r.src)) { if (s.fellBack) stats.decodeFallbacks.push(s.name); stats.decodeWaitMs = (stats.decodeWaitMs || 0) + s.waitMs; s.close(); }
     r.src = {};
   };

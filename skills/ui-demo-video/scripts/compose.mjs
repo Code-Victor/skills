@@ -203,7 +203,8 @@ const probeClip = (file) => {
   if (!['yuv420p', 'yuvj420p'].includes(st.pix_fmt)) info.reasons.push(`pixel format ${st.pix_fmt}`);
   if (!pk.length || pk.some((p) => !Number.isFinite(p.pos) || !Number.isFinite(p.pts))) info.reasons.push('packet table unreadable');
   if (pk.length) {
-    const minPts = Math.min(...pk.map((p) => p.pts));
+    let minPts = Infinity;
+    for (const p of pk) if (p.pts < minPts) minPts = p.pts;
     pk.forEach((p) => (p.pts -= minPts));
     const sorted = pk.map((p) => p.pts).sort((x, y) => x - y);
     const d = sorted.slice(1).map((v, i) => v - sorted[i]).filter((v) => v > 0).sort((x, y) => x - y);
