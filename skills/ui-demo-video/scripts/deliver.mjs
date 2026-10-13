@@ -88,7 +88,12 @@ const { spans } = sceneSpans(spec);
 // with the caption pill's own entrance and exit.
 const cues = [];
 for (const { start, end, scene: s } of spans) {
-  const add = (from, to, text) => text && cues.push({ from: Math.max(0, from), to: Math.max(from + 0.5, to), text });
+  // Blank lines would end a cue early (VTT and SRT both read an empty line as
+  // the end of the block), so drop them; a cue with nothing left is skipped.
+  const add = (from, to, raw) => {
+    const text = (raw ?? '').split('\n').map((l) => l.trim()).filter(Boolean).join('\n');
+    if (text) cues.push({ from: Math.max(0, from), to: Math.max(from + 0.5, to), text });
+  };
   if (s.type === 'title') add(start + 0.3, end - 0.3, [s.text, s.subtitle].filter(Boolean).join('\n'));
   else if (s.type === 'issue') add(start + 0.3, end - 0.3, [s.id && `${s.source ?? ''} ${s.id}`.trim(), s.title, s.quote && `“${s.quote}”`].filter(Boolean).join('\n'));
   else if (s.type === 'list') add(start + 0.3, end - 0.3, [s.title, ...s.items].join('\n'));
@@ -104,8 +109,10 @@ const stamp = (t, sep) => {
   const sec = String(Math.floor((ms % 6e4) / 1000)).padStart(2, '0');
   return `${h}:${m}:${sec}${sep}${String(ms % 1000).padStart(3, '0')}`;
 };
+// VTT reads cue text as markup, so & < > must be escaped there; SRT stays plain.
+const vttText = (t) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const writeText = () => {
-  writeFileSync(join(outDir, `${name}.vtt`), `WEBVTT\n\n${cues.map((c) => `${stamp(c.from, '.')} --> ${stamp(c.to, '.')}\n${c.text}`).join('\n\n')}\n`);
+  writeFileSync(join(outDir, `${name}.vtt`), `WEBVTT\n\n${cues.map((c) => `${stamp(c.from, '.')} --> ${stamp(c.to, '.')}\n${vttText(c.text)}`).join('\n\n')}\n`);
   writeFileSync(join(outDir, `${name}.srt`), `${cues.map((c, i) => `${i + 1}\n${stamp(c.from, ',')} --> ${stamp(c.to, ',')}\n${c.text}`).join('\n\n')}\n`);
   // Chapters: scenes with a `chapter`, or each title and issue card.
   const mmss = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
