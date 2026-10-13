@@ -347,11 +347,13 @@ if (doCapture) {
 
   if (toRecord.length) {
     await stage('chrome', async () => {
-      const up = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(1500) }).then((r) => r.ok, () => false);
-      if (up) return `already running on ${port}`;
-      const r = await run('chrome', join(HERE, 'chrome.sh'), [], { env: { PORT: String(port) }, timeoutSec: 60 });
+      // Always through chrome.sh: it starts the background Chrome when none is
+      // up, and when a --login window is open it takes the session back into
+      // the background one. Recording in the login window would work, but the
+      // point is that nothing shows on screen.
+      const r = await run('chrome', join(HERE, 'chrome.sh'), [], { env: { PORT: String(port) }, timeoutSec: 90 });
       if (r.code !== 0) return fail('chrome', [`chrome.sh exited ${r.code}`, tail(r.text)]);
-      return `started on ${port}`;
+      return tail(r.text, 1).replace(/^Chrome /, '').replace(/ \(profile: .*$/, ')');
     });
 
     for (const n of toRecord) writeFileSync(stepsFile(n), `${JSON.stringify(takes[n].steps, null, 1)}\n`);
