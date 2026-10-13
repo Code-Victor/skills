@@ -144,6 +144,7 @@ export function checkSpec(spec, { pub = '.', files = true, demo = false } = {}) 
       return;
     }
     if (s.type === 'list') {
+      if (!s.title) errors.push(`${at}: a list scene needs a title (template/src/types.ts requires it)`);
       if (!s.items?.length) errors.push(`${at}: a list scene needs items`);
       const settle = 0.45 + (s.items?.length ?? 0) * 0.16;
       if (s.durationSec < settle + 1.5) warnings.push(`${at}: the last item lands at ${settle.toFixed(1)}s; give it ${(settle + 1.5).toFixed(1)}s or more`);
