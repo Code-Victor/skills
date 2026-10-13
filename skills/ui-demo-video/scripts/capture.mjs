@@ -756,16 +756,19 @@ const measureRate = async () => {
 const pickSlowFor = async () => {
   const cfg = { w: width, h: height, dsf: scale, format: lossless ? 'png' : `jpeg${jpegQuality}`, encoder, headless: tab.headless };
   const others = await otherPages(port, tab.targetId);
-  // Alone: trust a fresh calibration, or measure. With other takes running a
-  // measurement would only see the contention of the moment, so share the
-  // last quiet measurement among them instead.
+  // A quiet measurement is stored; one taken while another take was running
+  // (before or after, siblings start together) is not, because it says nothing
+  // about a quiet machine. With siblings running, the last quiet measurement
+  // is shared out between them instead of measuring the contention of the
+  // moment: three takes at once need roughly three times the slowdown, and
+  // the end-of-take check still catches a take that came out choppy.
   let rate = !args.recalibrate ? cachedRate(cfg, others.length ? 24 * 3600e3 : 3600e3) : null;
   let how = 'cached';
   if (rate && others.length) { rate /= others.length + 1; how = `cached, shared with ${others.length} other take(s)`; }
   if (!rate) {
     rate = await measureRate();
     how = 'measured';
-    if (rate > 0 && !others.length) storeRate(cfg, rate);
+    if (rate > 0 && !others.length && !(await otherPages(port, tab.targetId)).length) storeRate(cfg, rate);
   }
   const slow = pickSlow(rate);
   say(`slow ${slow}x (${how} ${rate.toFixed(0)} frames a second)`);
