@@ -9,38 +9,16 @@
 // Credits. The look follows remocn's "premium" kit (MIT, remocn.dev): the backdrop
 // palette (#12121a #232338 #3a3a5c #52527a on #050709), soft-blur-in and
 // focus-blur-resolve timings, the glass-code-block card (1 px gradient ring, 60 %
-// panel, 6 % inset highlight, 0 50px 120px shadow) and the grain-dissolve transition's
-// shape (a grainy noise threshold between two blurred scenes). The GLSL below is
+// panel, 6 % inset highlight, 0 50px 120px shadow). The GLSL below is
 // written for this style (a domain-warped value-noise field under a radial scrim).
 import { stripEmphasis, emChars } from '../layout.js';
 import { titleSpans } from '../plan.js';
-import { parseColor } from '../color.js';
 
 const ACCENT = '#9bc8dd';       // remocn's release-teaser accent: a desaturated sky blue (L 0.82, C 0.06): it reads as cool white next to the blue-violet greys and never fights the app's own colours
 const FG = '#f1f3f8';           // off-white with a hair of blue: pure white on near-black is harsh on video
 const GROUND = '#050709';
 
 // ---- helpers ---------------------------------------------------------------
-const lum = (c) => { const k = parseColor(c); if (!k) return null; const f = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(k[0]) + 0.7152 * f(k[1]) + 0.0722 * f(k[2]); };
-/** A text colour that holds 4.5:1 even on the lightest glass (a caption over a white recording): mixes an unreadable one toward white. */
-const lift = (c, floor = 0.42) => {
-  const k = parseColor(c); const L = lum(c);
-  if (!k || L === null || L >= floor) return c;
-  for (let t = 0.05; t <= 1.0001; t += 0.05) {
-    const m = k.slice(0, 3).map((v) => Math.round(v + (255 - v) * t));
-    const col = `rgb(${m.join(',')})`;
-    if (lum(col) >= floor) return col;
-  }
-  return '#ffffff';
-};
-/** A tag colour the spec brought in: its hue is kept only as a trace (60 % toward the neutral tag grey), so the frame still has one accent; then lifted to be legible. */
-const OWN_TAGS = new Set(['#9bc8dd', '#aeb3c6', '#d7dae6']);
-const tame = (c) => {
-  const k = parseColor(c);
-  if (!k || OWN_TAGS.has(String(c).toLowerCase())) return lift(c);
-  const n = [0xd7, 0xda, 0xe6], m = k.slice(0, 3).map((v, i) => Math.round(v * 0.4 + n[i] * 0.6));
-  return lift(`rgb(${m.join(',')})`);
-};
 const MONO_TRACK = '0.01em';
 
 // ---- background -----------------------------------------------------------
@@ -66,34 +44,6 @@ vec3 background(vec2 uv, vec2 px, float t){
   float pool = exp(-dot(e, e) * 1.45);
   float lvl = pool * (.68 + .32 * f) * uP[0];
   return ramp(lvl);
-}`;
-
-// ---- the grain dissolve (act breaks) ----------------------------------------
-// remocn's grain-dissolve, rebuilt as a pure function of the two layers: the old scene
-// blurs and melts away through a low-frequency noise threshold with a fine grain on
-// the edge, the new one resolves out of blur behind it. It is slow (2.2 s here; remocn's is
-// 2.5 s) so it suits an act break, not every cut.
-const GRAIN_DISSOLVE = `
-float gh(vec2 p){ vec3 q = fract(vec3(p.xyx) * .1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
-float gn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3. - 2. * f); return mix(mix(gh(i), gh(i + vec2(1., 0.)), f.x), mix(gh(i + vec2(0., 1.)), gh(i + vec2(1., 1.)), f.x), f.y); }
-float gf(vec2 p){ return .55 * gn(p) + .3 * gn(p * 2.1 + 3.7) + .15 * gn(p * 4.3 + 9.1); }
-vec4 gblur(bool from, vec2 uv, float r){
-  if (r < .4) return from ? getFrom(uv) : getTo(uv);
-  vec4 s = vec4(0.); float tw = 0.; vec2 px = r / uRes;
-  for (int i = 0; i < 12; i++) { float a = float(i) * 2.39996, d = sqrt((float(i) + .5) / 12.);
-    vec2 o = vec2(cos(a), sin(a)) * d * px; float w = 1. - .5 * d;
-    s += (from ? getFrom(uv + o) : getTo(uv + o)) * w; tw += w; }
-  return s / tw;
-}
-vec4 transition(vec2 uv){
-  float p = uProgress, e = p * p * (3. - 2. * p), k = uRes.y / 1080.;
-  float n = gf(uv * vec2(uRes.x / uRes.y, 1.) * 3.2);
-  float g = gh(floor(uv * uRes / (2. * k)) + floor(p * 24.));
-  float t = e * 1.7 - .35 - (n - .5) * 1.0 - g * .12;
-  float vis = smoothstep(0., .4, t);
-  vec4 a = gblur(true, uv, 20. * k * smoothstep(0., .6, e));
-  vec4 b = gblur(false, uv, 20. * k * (1. - smoothstep(.4, 1., e)));
-  return a * (1. - vis) * (1. - smoothstep(.55, 1., e)) + b * vis;
 }`;
 
 // ---- builders -------------------------------------------------------------
@@ -127,7 +77,7 @@ const build = {
   // The issue card: remocn's dark glass. Gradient hairline ring, 60 % panel, inset top highlight, deep soft shadow.
   issue: (c) => {
     const { style, scene, fg, accent, u } = c, k = style.card, has = c.has;
-    const bar = lift(style.palette.tagColors?.Before ?? style.palette.danger, 0.3);
+    const bar = style.palette.tagColors?.Before ?? style.palette.danger;
     const mono = c.font('mono');
     const html = `<div class="af" style="align-items:center;justify-content:center;font-family:${c.font('text')}">
       <div id="card" style="position:relative;width:${k.width * u}px;padding:${k.padY * u}px ${k.padX * u}px;border-radius:${k.radius * u}px;background:rgba(10,10,12,0.62);box-shadow:inset 0 1px 0 rgba(255,255,255,0.06),0 ${50 * u}px ${120 * u}px rgba(0,0,0,0.55);display:flex;flex-direction:column;gap:${k.gap * u}px">
@@ -156,16 +106,18 @@ const build = {
           ${has(scene.subtitle) ? `<div style="${has(scene.title) ? `margin-top:${14 * u}px;` : ''}font-family:${c.font('mono')};font-size:${k.subtitleSize * u}px;letter-spacing:${MONO_TRACK};color:${fg};opacity:${k.subtitleOpacity}">${c.rich(scene.subtitle)}</div>` : ''}
         </div>
         <div style="display:flex;flex-direction:column">
-          ${items.map((it, n) => `<div data-p="i${n}" data-pad="8" style="display:flex;align-items:center;gap:${22 * u}px;padding:${18 * u}px 0;${n === 0 ? `border-top:1px solid rgba(255,255,255,0.1);` : ''}border-bottom:1px solid rgba(255,255,255,0.1);font-size:${k.itemSize * u}px;font-weight:500;letter-spacing:-0.01em;color:${fg};line-height:1.25">${icon}<span>${c.rich(it)}</span></div>`).join('')}
+          ${items.map((it, n) => `<div data-p="i${n}" data-pad="8" style="display:flex;align-items:center;gap:${28 * u}px;padding:${27 * u}px 0;${n === 0 ? `border-top:1px solid rgba(255,255,255,0.1);` : ''}border-bottom:1px solid rgba(255,255,255,0.1);font-size:${k.itemSize * u}px;font-weight:500;letter-spacing:-0.01em;color:${fg};line-height:1.25">${icon}<span>${c.rich(it)}</span></div>`).join('')}
         </div></div></div>` };
   },
 
   // The caption: dark glass, wraps (balanced) instead of overflowing, a mono tag whose colour is lifted to stay readable.
   caption: (c) => {
     const k = c.style.caption, p = k.glass, size = c.size, u = c.u, pos = c.pos;
-    const tag = c.tag ? `<span style="color:${tame(c.color)};font-family:${c.font('mono')};font-weight:500;font-size:0.84em;letter-spacing:${MONO_TRACK};flex-shrink:0">${c.esc(c.tag)}</span>` : '';
+    // After (the accent) is a filled chip, every other tag an outlined one: the difference is shape and fill, not a second hue
+    const lit = c.tag && String(c.color).toLowerCase() === String(c.accent).toLowerCase();
+    const tag = c.tag ? `<span style="${lit ? `background:${c.accent};color:${c.style.palette.onAccent};font-weight:600;` : `color:${c.color};box-shadow:inset 0 0 0 1px ${c.rgba(c.color, 0.5)};font-weight:500;`}font-family:${c.font('mono')};font-size:0.8em;letter-spacing:${MONO_TRACK};padding:0.14em 0.62em;border-radius:0.5em;flex-shrink:0;line-height:1.3">${c.esc(c.tag)}</span>` : '';
     return { html: `<div style="position:absolute;${pos.css};display:flex;align-items:center;justify-content:${pos.align};padding-left:${pos.padLeft}px">
-      <div id="pill" style="display:inline-flex;align-items:center;gap:${size * 0.75}px;max-width:${c.W * 0.78}px;padding:${size * 0.62}px ${size * 1.15}px;border-radius:${p.radius * u}px;box-shadow:inset 0 0 0 1px ${p.border},inset 0 1px 0 rgba(255,255,255,0.07);font-family:${c.font('text')};font-size:${size}px;font-weight:${k.weight};line-height:1.32;letter-spacing:-0.005em;color:${k.color}">
+      <div id="pill" style="display:inline-flex;align-items:center;gap:${size * 0.75}px;max-width:${c.W * 0.7}px;padding:${size * 0.62}px ${size * 1.15}px;border-radius:${p.radius * u}px;box-shadow:inset 0 0 0 1px ${p.border},inset 0 1px 0 rgba(255,255,255,0.07);font-family:${c.font('text')};font-size:${size}px;font-weight:${k.weight};line-height:1.32;letter-spacing:-0.005em;color:${k.color}">
         ${tag}<span data-type style="text-wrap:balance">${c.rich(c.text)}</span></div></div>` };
   },
 };
@@ -182,10 +134,15 @@ export default {
     accent: ACCENT,
     onAccent: GROUND,
     // One accent: After is lit, Before and Tour are neutral greys, not a second hue. All of them hold 4.5:1 on the dark glass.
-    tagColors: { Before: '#aeb3c6', After: ACCENT, Tour: '#d7dae6' },
+    tagColors: { Before: '#c2c6d6', After: ACCENT, Tour: '#d7dae6' },
     tagFallback: '#d7dae6',
     danger: '#aeb3c6',
+    // Colours a spec brings are kept as a trace only (92 % toward the neutral tag grey) so the frame keeps one accent, then lifted to 4.5:1
+    // on the lightest glass a caption can sit on (a full-bleed white recording). A tag called After is the accent.
+    mapAccent: (c, t) => t.ensureContrast(t.mix(c, ACCENT, 0.45), '#3e3f45', 4.5),   // a spec's accent is pulled partway to this style's own
+    mapTag: (name, c, t) => (/^after$/i.test(name) ? t.palette.accent : t.ensureContrast(t.mix(c, '#d7dae6', 0.92), '#3e3f45', 4.5)),
   },
+  logo: { filter: 'grayscale(1) invert(1) contrast(1.15)' },   // a dark logo on the dark ground: a quiet monochrome, no second hue
   fonts: {
     // Geist: tight, neutral, made for this size; Geist Mono for tags, ids and the subtitle.
     text: { family: 'Geist', weights: [400, 500, 600], fallback: "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" },
@@ -199,7 +156,7 @@ export default {
     background: {
       kind: 'shader', glsl: BACKGROUND_GLSL,
       colors: [GROUND, '#12121a', '#232338', '#3a3a5c', '#52527a'],   // remocn premium backdrop
-      params: [0.5, 0.045],                             // level, drift (noise units a second)
+      params: [0.55, 0.045],                             // level, drift (noise units a second)
     },
   },
   post: { dither: 2.5, grain: 0.014, grainSize: 1.4, vignette: 0.14, vignetteSoftness: 0.7 },
@@ -212,7 +169,7 @@ export default {
     shadow: '0 50px 100px -24px rgba(0,0,0,0.7),0 18px 36px -14px rgba(0,0,0,0.5)',
     glow: { color: 'rgba(140,165,230,0.085)', blur: 220, spread: 12 },   // the screen lighting the room: wide, cool, under 12 % alpha
     shadowPad: 320,
-    border: { width: 1, color: 'rgba(255,255,255,0.1)' },
+    border: { width: 1, gradient: 'linear-gradient(180deg, rgba(255,255,255,0.2), rgba(255,255,255,0.03) 50%, rgba(255,255,255,0))' },
     highlight: { color: 'rgba(255,255,255,0.14)' },
     drift: { to: 1.028 },                               // no frame is static
   },
@@ -225,7 +182,7 @@ export default {
     tag: { style: 'word', weight: 500 },
   },
   title: {
-    size: 0.06, weight: 600, subtitleSize: 0.0145, subtitleOpacity: 0.62, subtitleEnter: 'blur', measure: 'glyph',
+    size: 0.066, weight: 600, maxEnterSec: 0.95, subtitleSize: 0.0145, subtitleOpacity: 0.62, subtitleEnter: 'blur', measure: 'glyph',
     tracking: { 'word-push': -0.04, 'micro-scale-fade': -0.045, 'soft-blur-in': -0.045 },
   },
   card: {
@@ -233,16 +190,16 @@ export default {
     metaSize: 24, statusSize: 22, statusAlpha: 0.12, titleSize: 54, quoteSize: 32, reporterSize: 24,
     quoteBar: 3, shadowPad: 300, rowEnter: 'blur',
   },
-  list: { width: 1100, gap: 34, titleSize: 68, subtitleSize: 26, subtitleOpacity: 0.62, itemSize: 36, iconSize: 32, itemEnter: 'blur' },
-  callout: { ringWidth: 2.5, fillAlpha: 0.05, dimAlpha: 0.6, dimColor: '#030409', chip: { size: 24, weight: 600, padY: 8, padX: 16, radius: 999, background: 'rgba(8,9,12,0.92)', color: ACCENT } },
+  list: { width: 1240, gap: 46, titleSize: 88, subtitleSize: 28, subtitleOpacity: 0.62, itemSize: 44, iconSize: 40, itemEnter: 'blur' },
+  callout: { ringWidth: 3.5, fillAlpha: 0.08, dimAlpha: 0.6, dimColor: '#030409', chip: { size: 24, weight: 600, padY: 8, padX: 16, radius: 999, background: 'rgba(8,9,12,0.92)', color: ACCENT } },
 
   motion: {
     card: { rise: 12, rows: [0.3, 0.55, 0.8], alpha: [1, 0.9, 0.74] },
     list: { headRise: 12, start: 0.5, step: 0.2, dx: 0 },
     text: {
       // remocn soft-blur-in: blur 12 to 0, rise 14 px, about 0.8 s on bezier(0.22,1,0.36,1); counts are output frames (tuned at 60 fps)
-      softBlur: { stagger: 1, rise: 14, blur: 12, frames: 50, riseFrames: 42, ease: [0.22, 1, 0.36, 1] },
-      microScale: { frames: 24, from: 0.97, ease: [0.22, 1, 0.36, 1] },
+      softBlur: { stagger: 1, rise: 14, blur: 12, frames: 27, riseFrames: 9, staggerSec: 0.028, sec: 0.8, riseSec: 0.65, ease: [0.22, 1, 0.36, 1] },
+      microScale: { frames: 18, from: 0.97, sec: 0.8, ease: [0.22, 1, 0.36, 1] },
       subtitle: { from: 0.7, to: 1.35, rise: 8 },
     },
   },
@@ -253,10 +210,11 @@ export default {
   transition: {
     default: 'zoom-blur', sec: 0.7,
     params: {
-      zoomBlur: { scaleIn: 0.94, scaleOut: 1.07, sigma: 14 },
-      focusPull: { bright: 1.02, brightIn: 1.02 },                    // the original's x1.3 is a flash on a dark ground
+      zoomBlur: { scaleIn: 0.96, scaleOut: 1.04, sigma: 10 },
+      focusPull: { bright: 1.0, brightIn: 1.0, scaleOut: 1.04, scaleIn: 0.98, sigma: 14 },
+      pushThrough: { scale: 1.1, scaleIn: 0.94, settle: 1.0, sigma: 10, sigmaIn: 0.6 },
+      whipPan: { blur: 14, stretch: 0.06 },                    // the original's x1.3 is a flash on a dark ground
     },
-    custom: { 'grain-dissolve': { sec: 2.2, stepped: false, glsl: GRAIN_DISSOLVE } },
   },
   build,
 };
