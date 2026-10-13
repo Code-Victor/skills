@@ -315,7 +315,7 @@ export class Scenes {
   frame(active, frames, final) {
     const { gl, spec, W, H } = this;
     this.final = final; this.cur = final;
-    gl.target(final); gl.clear(0, 0, 0, 1);
+    gl.target(final); gl.clear(1, 1, 1, 1);   // Remotion renders over a white page, so transitions fade through white
     for (const a of active) {
       const enterFx = a.enter !== null ? effectFor(a.enterGap, true, a.enter, W, H) : null;
       const exitFx = a.exit !== null ? effectFor(a.exitGap, false, a.exit, W, H) : null;
