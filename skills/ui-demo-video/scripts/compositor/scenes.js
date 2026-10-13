@@ -119,8 +119,12 @@ export class Scenes {
       this.extraIds.get(p.meta.owner).push(id);
     }
   }
-  /** The overlay clock: the local frame, held for `step` frames when the style quantises (the recording itself never is). */
-  q(local) { return this.clock ? Math.floor(local / this.step) * this.step : local; }
+  /**
+   * The overlay clock: the local frame, held for `step` frames when the style quantises (the recording itself never is).
+   * The ticks are on the OUTPUT frame count (every multiple of `step`), not on each scene's own start, so two scenes
+   * in a transition, the transition itself and the grain all change on the same frames (a scene begins on its first tick).
+   */
+  q(local) { return this.clock ? Math.max(0, local - (this.n % this.step)) : local; }
 
   still(id) {
     const s = this.R.stills.get(id);
@@ -423,7 +427,7 @@ export class Scenes {
         const m = markSize(box, c, u, K.pad), id = ID.mark(Math.round(m.w * 2), Math.round(m.h * 2), c.style ?? 'ring');
         if (this.has(id)) {
           const s = this.still(id), n = s.poses ?? 1, rate = style.motion.poseRate ?? this.clock?.poses ?? 10;
-          const pose = Math.min(n - 1, Math.floor(Math.max(0, local - from) / fps * rate));
+          const pose = Math.min(n - 1, Math.floor(Math.max(0, ql - from) / fps * rate));   // on the overlay clock, like everything else
           const kx = bwid / s.bw, ky = bhgt / s.bh;
           const pid = this.has(`${id}@${pose}`) ? `${id}@${pose}` : id, ps = this.still(pid);
           gl.quad(ps.tex, { x: left - (ps.bx - ps.x) * kx, y: top - (ps.by - ps.y) * ky, w: ps.w * kx, h: ps.h * ky }, { opacity: o });
@@ -593,7 +597,7 @@ export class Scenes {
   scene(i, local, frames) {
     const scene = this.spec.scenes[i];
     this.index = i;
-    this.ql = this.q(local); this.pose = this.clock ? Math.floor(local / this.step) : 0;
+    this.ql = this.q(local); this.pose = this.clock ? Math.floor(this.n / this.step) : 0;
     this.poseT = this.ql / this.fps;   // the clock pose sequences play on (a caption sets its own)
     switch (scene.type) {
       case 'title': return this.title(scene, local);
@@ -616,7 +620,7 @@ export class Scenes {
       const cols = (bg.colors ?? []).slice(0, 6).flatMap((c) => this.rgb(c));
       while (cols.length < 18) cols.push(0);
       g.uniform1f(P.u.uTime, (n / fps) * (bg.timeScale ?? 1)); g.uniform3fv(P.u.uCol, cols); g.uniform1fv(P.u.uP, backgroundParams(bg, u));
-      g.uniform1f(P.u.uNCol, Math.min(6, (bg.colors ?? []).length)); g.uniform1f(P.u.uFrame, n);
+      g.uniform1f(P.u.uNCol, Math.min(6, (bg.colors ?? []).length)); g.uniform1f(P.u.uFrame, this.noiseFrame());
       g.uniform1f(P.u.uDither, gl.float ? 0 : style.post.dither);    // 8-bit frames dither right here; half-float ones wait for the final pass
       gl.fill();
     } else if (bg.kind === 'ambient') {
@@ -666,11 +670,16 @@ export class Scenes {
     else apply(content, enterFx || exitFx, dst, false);
     gl.target(dst); this.cur = dst;
   }
+  /** The frame number the grain and dither noise are seeded with: every output frame (post.grainClock 'frame', the default), every clock pose ('pose'), or never moving ('static'). */
+  noiseFrame() {
+    const k = this.style.post.grainClock;
+    return k === 'static' ? 0 : k === 'pose' ? Math.floor(this.n / this.step) : this.n;
+  }
   /** Progress of a gap as the transition sees it: held between poses when the style (or the transition) steps. */
   stepP(p, gap) {
     if (!gap.stepped || !this.clock) return p;
     const frames = Math.max(1, Math.round(gap.sec * this.fps));
-    return Math.floor(Math.min(frames - 1, p * frames) / this.step) * this.step / frames;
+    return Math.max(0, Math.min(frames - 1, Math.round(p * frames)) - (this.n % this.step)) / frames;
   }
   /** A style's own transition: both scenes into layers, then its GLSL mixes them over the target. */
   customTransition(a, b, frames, dst) {
@@ -717,8 +726,7 @@ export class Scenes {
     if (main) {
       const p = style.post;
       gl.target(null);
-      const gf = p.grainClock === 'static' ? 0 : p.grainClock === 'pose' ? Math.floor(n / this.step) : n;   // grain on the output frames (default), on the style's clock poses, or never moving
-      gl.post(main.tex, n, { grainFrame: gf, dither: p.dither, grain: p.grain, grainSize: p.grainSize * this.u, vignette: p.vignette, vignetteSoftness: p.vignetteSoftness });
+      gl.post(main.tex, n, { grainFrame: this.noiseFrame(), dither: p.dither, grain: p.grain, grainSize: p.grainSize * this.u, vignette: p.vignette, vignetteSoftness: p.vignetteSoftness });
       this.cur = null;
     }
   }

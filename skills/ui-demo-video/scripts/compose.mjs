@@ -11,6 +11,7 @@
 //   --software           encode in software (slower; also what happens when no GPU encoder exists)
 //   --proxy              transcode every clip to a compositor-friendly proxy first (testing)
 //   --style <name>       the visual style (overrides the spec's "style"); --list-styles shows them
+//   --hash-frames <file> write a SHA-1 of every frame's canvas pixels, taken before encoding (determinism checks; slow)
 //   --json               print one line of JSON instead of the human summary
 //
 // How it works. Text, cards, captions and window shadows are real HTML/CSS:
@@ -455,6 +456,7 @@ const chrome = spawn(CHROME, [
   '--no-first-run', '--no-default-browser-check', '--mute-audio', '--hide-scrollbars', '--force-device-scale-factor=1',
   '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows',
   '--disable-features=Translate,MediaRouter', `--window-size=${W},${H}`,
+  ...(process.env.COMPOSE_CHROME_ARGS ? process.env.COMPOSE_CHROME_ARGS.split(/\s+/).filter(Boolean) : []),   // test hook: extra Chrome flags
   ...(SOFT_GL ? ['--use-angle=swiftshader', '--use-gl=angle', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] : []), 'about:blank',
 ], { stdio: ['ignore', 'ignore', 'pipe'] });
 let chromeErr = '';
@@ -603,7 +605,7 @@ if (stillMode) stillOutPath = path.resolve(flags['still-out']);
 const stillFrame = Math.min(N - 1, Math.max(0, Math.round(+flags.still * FPS)));
 
 const buildManifest = () => ({
-  W, H, fps: FPS, frames: N, spec, style: serialisable(style), bitrate, software: !!flags.software, mode: stillMode ? 'still' : 'video', stillFrame,
+  W, H, fps: FPS, frames: N, spec, style: serialisable(style), hashFrames: !!flags['hash-frames'], bitrate, software: !!flags.software, mode: stillMode ? 'still' : 'video', stillFrame,
   stills,
   clips: Object.fromEntries([...clips].map(([src, c]) => [src, {
     url: mediaUrl(c.abs),
@@ -647,6 +649,7 @@ for (;;) {
   tRender = Date.now();
 }
 const tRendered = Date.now();
+if (flags['hash-frames'] && result.hashes) fs.writeFileSync(path.resolve(flags['hash-frames']), result.hashes.join('\n') + '\n');
 for (const w of result.warnings ?? []) warn(w);
 if (result.decodeFallbacks?.length) warn(`hardware decode failed for ${[...new Set(result.decodeFallbacks)].join(', ')}; software decode took over`);
 

@@ -135,6 +135,7 @@ async function run() {
 
   // ---- frame loop ----
   const first = still ? m.stillFrame : 0, last = still ? m.stillFrame + 1 : N;
+  const hashes = [];   // m.hashFrames: a SHA-1 of the canvas pixels of every frame, taken just before the encoder sees it (determinism checks)
   const t0 = now();
   const st = { decode: 0, draw: 0, vframe: 0, backpressure: 0, encode: 0 };
   let lastProgress = t0;
@@ -169,6 +170,11 @@ async function run() {
       await post('/still-out', blob);
       break;
     }
+    if (m.hashFrames) {
+      const g = gl.gl, px = new Uint8Array(W * H * 4);
+      g.bindFramebuffer(g.FRAMEBUFFER, null); g.readPixels(0, 0, W, H, g.RGBA, g.UNSIGNED_BYTE, px);
+      hashes.push([...new Uint8Array(await crypto.subtle.digest('SHA-1', px))].slice(0, 8).map((b) => b.toString(16).padStart(2, '0')).join(''));
+    }
     t = now();
     const vf = new VideoFrame(canvas, { timestamp: Math.round(n * FRAME_US), duration: Math.round(FRAME_US) });
     st.vframe += now() - t;
@@ -190,7 +196,7 @@ async function run() {
   spans.forEach((_, i) => closeScene(i));
   const wallMs = now() - t0;
   await post('/done', JSON.stringify({ ok: true, frames: last - first, wallMs: Math.round(wallMs), chunks, st: Object.fromEntries(Object.entries(st).map(([k, v]) => [k, Math.round(v)])),
-    renderer: gl.renderer, enc: encInfo, warnings: stats.warnings, decodeFallbacks: stats.decodeFallbacks, decodeWaitMs: Math.round(stats.decodeWaitMs || 0) }));
+    renderer: gl.renderer, enc: encInfo, hashes, warnings: stats.warnings, decodeFallbacks: stats.decodeFallbacks, decodeWaitMs: Math.round(stats.decodeWaitMs || 0) }));
 }
 
 run().catch((e) => post('/done', JSON.stringify({ ok: false, fatal: String(e && e.message || e), stack: String(e && e.stack || '').slice(0, 1500), badClip: e && e.clip })));

@@ -168,7 +168,7 @@ void main(){
     float r = length((vPx / uRes - .5) * 2.) / 1.41421356;
     c *= 1. - uVig * smoothstep(1. - uVigSoft, 1., r);
   }
-  vec2 seed = vPx + 5.588238 * mod(uFrame, 64.);
+  vec2 seed = vPx + 5.588238 * mod(uGrainFrame, 64.);   // dither follows the noise clock too (post.grainClock)
   if (uGrain > 0.) {                                         // luminance film grain, triangular, at uGrainSize px
     vec2 g = floor(vPx / uGrainSize) + 5.588238 * mod(uGrainFrame, 64.);
     c += (ign(g) + ign(g + vec2(37., 17.)) - 1.) * uGrain;
