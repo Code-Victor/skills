@@ -37,14 +37,28 @@ Objects merge key by key through `extends` and `overrides`; arrays, functions an
 numbers replace. The resolved style gets a hash that is part of every captured
 piece's name, so changing a token can never reuse a stale picture.
 
-How the spec's own `theme` interacts: `theme.background`, `foreground`, `accent`
-and `tagColors` (per tag) win over the style's palette (a `theme.background`
-replaces the style's background with that CSS). demo.mjs writes the authoring
-defaults into every spec, so for a style other than studio a theme value equal to
-that authoring default counts as "not set". The same goes for `transition` /
-`transitionSec` equal to the authoring default (`zoom-blur`, 0.5 or 0.45): the
-style's `transition.default` and `.sec` apply. Any colour CSS understands works
-for the accent (oklch, hsl, names): Chrome resolves it once per render.
+**What the spec may change (precedence).** What is in the spec is what its author wrote:
+for a style other than studio, `spec-lib` writes no theme, `transition` or `transitionSec`
+default, and the engine adds none, so there is no "a value equal to the default counts as
+unset" guessing. An explicit `"transition": "zoom-blur"` (or `"transitionSec": 0.45`) under
+`midnight` renders exactly that; with none, the style's `transition.default` and `.sec` apply.
+
+- **studio** keeps today's behaviour: `theme.background`, `foreground`, `accent` and `tagColors` all apply.
+- **Any other style owns its ground and text colour.** `theme.background` and `theme.foreground`
+  are ignored, with one warning (and a `check-video` warning) that names the way to change them:
+  `"style": { "preset": "midnight", "overrides": { "palette": { "background": "...", "foreground": "..." } } }`.
+- `theme.accent` and `theme.tagColors` still apply, but pass through the style's own
+  `palette.mapAccent(colour, tools)` and `palette.mapTag(name, colour, tools)` when it has them (see the
+  palette table), so a style can adapt a colour somebody else picked to its ground. They run once, in
+  Node, when the style is resolved: everything that later uses the accent or a tag colour (caption tags,
+  split labels, the quote bar, callouts, emphasis, list icons) sees the adapted value. A builder should NOT
+  map again. `tools` is `{ palette, ground, parse, luminance, contrast, mix, alpha, ensureContrast }`
+  (`ground` is `canvas.matte`; the helpers return the colour untouched when they cannot read it, e.g.
+  oklch or hsl, so always return something). Example:
+  `mapTag: (name, c, t) => t.ensureContrast(c, t.ground, 4.5)` lifts a dark red until it reads on near-black.
+- `theme.logo` is untouched; give a dark ground a **logo treatment** with the `logo` token (below).
+
+Any colour CSS understands works for the accent (oklch, hsl, names): Chrome resolves it once per render.
 
 Units: lengths are **u** (px at 1920 wide; they scale with the canvas) unless the
 name says a fraction of W (width) or H (height). Times are seconds; "frames" are
@@ -64,10 +78,21 @@ Every token below exists in `studio.js` with the default shown.
 | tagColors | `{}` | `{ Before: '#e5484d' }` colour of caption tags |
 | tagFallback | `#6ebeff` | tag colour when the tag has none |
 | danger | `#e5484d` | the issue card's quote bar when `tagColors.Before` is not set |
+| mapAccent | `null` | `(colour, tools) => colour`: adapts `theme.accent` to this style's ground (non-studio only) |
+| mapTag | `null` | `(tagName, colour, tools) => colour`: adapts each of `theme.tagColors` (non-studio only) |
+
+### logo
+`theme.logo` in the spec is the picture; this token is how the style treats it (all `null` = as is).
+`filter`: any CSS filter applied when the logo still is captured (`invert(1)` for a dark logo on a dark ground,
+`brightness(1.4)`), `plate`: `{ background, padX, padY, radius, border }` a rounded plate behind it (u). Both together work.
 
 ### fonts
-`text`, `display`, `mono`, each `{ family, weights, fallback }`. `family` is a Google
-Fonts family (or `null` for the fallback only). Each family is downloaded once
+`text`, `display`, `mono`, each `{ family, weights, italic, opsz, fallback }`. `family` is a Google
+Fonts family (or `null` for the fallback only). `italic: true` also fetches the italic faces
+(use `<i>` or `font-style: italic`); `opsz: 72` (a number, or `'8..72'`) pins the optical size of a family
+that has the axis (Newsreader, Fraunces: 72 is the display cut; a family without the axis fails the
+download and falls back with a warning). One choice per family. Each variant is cached under its own name
+(`newsreader-400.600-i-o72`). Each family is downloaded once
 (latin subset) to `$XDG_CACHE_HOME/ui-demo-video/fonts` and reused offline. When
 the download fails there is one 4 s attempt, remembered for 10 minutes (a
 `.failed` marker), and the text uses `fallback`; the render warns. Env:
@@ -107,6 +132,7 @@ Credit adapted shader code above the function with its licence (MIT or Apache-2.
 | dither | 0 | triangular noise in 8-bit levels (2 to 3 removes banding in dark gradients) |
 | grain | 0 | film grain amplitude 0..1 (0.012 is about 3 levels) |
 | grainSize | 1.5 | grain cell in u |
+| grainClock | `frame` | when the grain and dither noise changes: `frame` (every output frame), `pose` (every pose of `motion.clock`, so a stepped style's grain steps with it) or `static` (never: the same grain on every frame, which also encodes better) |
 | vignette, vignetteSoftness | 0, 0.6 | corner darkening 0..1, and how far in it starts |
 
 Any of them switches the frame through a half-float buffer, so gradients are
@@ -121,7 +147,7 @@ computed without banding and dithered once at the end.
 | fill | `#fff` | colour behind the recording |
 | shadow | `0 0 0 1px rgba(0,0,0,0.06),0 24px 70px rgba(0,0,0,0.22)` | any CSS box-shadow list |
 | shadowPad | 130 | px kept around the shell for the shadow |
-| border | null | `{ width, color }` hairline drawn OVER the recording's edge |
+| border | null | `{ width, color }` hairline drawn OVER the recording's edge; or `{ width, gradient: 'linear-gradient(180deg, rgba(255,255,255,.18), rgba(255,255,255,0) 60%)' }` for a gradient ring (a top-lit hairline; the ring is the gradient with the middle cut out by a mask, so any CSS gradient works). `highlight` still adds its 1 px line |
 | highlight | null | `{ color }` 1 px line along the inner top edge, over the recording |
 | glow | null | `{ color, blur, spread }` tinted glow behind the window |
 | insets | `[0,0,0,0]` | u: room inside the shell around the recording `[top,right,bottom,left]` (a title bar, a photo-frame strip) |
@@ -141,33 +167,39 @@ rounded corners (top corners square when there is a top inset).
 `variant`: `pill` | `glass` | `plain` | `bar` | `mono`.
 `placement`: `under` (band below the window), `overlay` (inside, at the bottom), `slot` (the shell's bottom inset strip; it rides with the window's tilt).
 `align`: `center` | `left`. `size` (0.0135 W), `offset` (0.05 H bottom gap when there is no band), `inset` (0.03 H overlay gap).
-`color` `#fff`, `weight` 500, `textShadow` (bar, mono).
+`color` `#fff`, `weight` 500, `textShadow` (bar, mono), `maxWidth` (a fraction of W; null keeps one line, a number makes every variant wrap inside that width, and a typed caption follows its lines).
+`scrim`: `{ height: 0.3, color: '#000', opacity: 0.6 }` a soft gradient up from the bottom of the recording (height is a fraction of the recording's height), drawn behind overlay captions and captions on a full-bleed recording; it fades in with the first caption of the scene and out with the last, and rides with the window group.
 Variant tokens: `pill { gap, padY, padX, radius, background, shadow, border }`, `glass { blur, tint, saturate, border, radius, shadow }`
 (a blurred, tinted copy of what is behind it, drawn by the GPU), `plain { shadow, rule, ruleColor }`, `bar { barWidth, padX, padY, background, tagSize }`, `mono { prompt, promptColor }`.
 `tag { style: 'word' | 'chip' | 'bracket', weight }`.
 **Entrance** (B): `enter: 'fade'` (today's: opacity plus a rise of `rise` caption heights), `'blur'` (opacity plus blur `blurPx` to 0 over `blurSec`, no translation), `'rise'`, `'type'`
-(characters revealed left to right at `typeCps` by clipping the captured text at real glyph edges; `caret: 'bar' | 'block' | 'none'` blinks on a fixed clock and stays; it suits plain, mono and bar). `delay` 0.25, `exit` 0.35. The same four work for the title's subtitle (`title.subtitleEnter`), card rows (`card.rowEnter`: `rise` = today, `fade`, `blur`, `type`) and list items (`list.itemEnter`: `slide` = today, others as above).
+(characters revealed in reading order at `typeCps` by clipping the captured text at real glyph edges, **line by line**: earlier lines whole, the current one up to the caret, so wrapped captions (set `caption.maxWidth`) and wrapped titles type properly; `caret: 'bar' | 'block' | 'none'` moves from line to line, blinks on a fixed clock and stays; it suits plain, mono and bar). `delay` 0.25, `exit` 0.35. The same four work for the title's subtitle (`title.subtitleEnter`), card rows (`card.rowEnter`: `rise` = today, `fade`, `blur`, `type`) and list items (`list.itemEnter`: `slide` = today, others as above).
 
 ### title, card, list
-`title`: `size` 0.042 W, `weight` 600, `align` `center`|`left` (with `padLeft`), `subtitleSize/Weight/Opacity/Enter`, `gap`, `tracking` per effect, `measure`: `estimate` (today: 0.5 em per character, Inter's guess, used by word-push) or `glyph` (the real captured word widths: use this for any other font).
+`title`: `enter` (the entrance when a scene has no `effect`: `soft-blur-in` | `word-push` | `micro-scale-fade` | `type` | `lines`; a scene's own `effect` wins, and `type` and `lines` are valid scene effects too), `maxEnterSec` (null: none; a number speeds the whole entrance up until it finishes within that many seconds, whatever the text length), `size` 0.042 W, `weight` 600, `align` `center`|`left` (with `padLeft`), `subtitleSize/Weight/Opacity/Enter`, `gap`, `tracking` per effect, `measure`: `estimate` (today: 0.5 em per character, Inter's guess, used by word-push) or `glyph` (the real captured word widths: use this for any other font).
+The two new entrances wrap the text (`maxWidth` 0.8 W, `lineHeight` 1.12) and capture it as ONE piece (`all`): `type` types it across the lines with `typeCps` (24) and `caret` / `caretColor`;
+`lines` is the line-by-line mask reveal: each line rises (`lines.rise` line heights, 1) into a mask that is its own band of the screen (`lines.stagger` 0.09 s, `lines.sec` 0.6, `lines.ease`, `lines.fade: false` for a pure mask reveal with no opacity ramp), whatever the wrapping turns out to be.
 `card`: `width` 1040, `padX/padY` 60/52, `radius` 28, `gap` 22, `fill`, `shadow`, `border`, `metaSize/metaOpacity`, `statusSize/statusAlpha`, `titleSize`, `quoteSize`, `reporterSize`, `quoteBar`, `rowEnter`. Card text uses `palette.foreground`: a dark card needs a light foreground, set both.
-`list`: `width` 1100, `gap`, `titleSize`, `subtitleSize/Opacity`, `itemSize`, `itemGap`, `iconSize`, `iconAlpha`, `numbered` (mono 01 02 03 instead of check icons), `itemEnter`.
+`list`: `width` 1100, `gap`, `titleSize`, `subtitleSize/Opacity`, `itemSize`, `itemGap`, `iconSize`, `iconAlpha`, `numbered` (mono 01 02 03 instead of check icons), `itemEnter`. With `slide`, items come in from `motion.list.dx` and `motion.list.dy` (u; dy 0 by default, so a row can rise instead of slide).
 
 ### callout
 `mark`: `ring` or your builder (`build.calloutMark`). `pad` 8, `radius` 10, `ringWidth` 2.5, `ringColor` (default accent), `dash` (0 solid; n dashes around), `fillAlpha`, `dimAlpha` 0.42, `dimColor`, `scaleIn` 0.96, `forSec` 2.5, `enterSec`, `exitSec`, `chip { size, weight, padX, padY, radius, background, color }`.
 
 ### motion
-`spring` `{ damping: 200 }` for every enter. `card { rise, rows, alpha }`, `list { headRise, start, step, dx }`, `split { stagger, rise }`,
-`text { softBlur { stagger, rise, blur, frames, riseFrames, ease }, microScale { frames, from, ease }, wordPush { reveal, slide, over, char, space, gap, accel }, subtitle { from, to, rise } }`,
+`spring` `{ damping: 200 }` for every enter. `card { rise, rows, alpha }`, `list { headRise, start, step, dx, dy }`, `split { stagger, rise }`,
+`text { softBlur { stagger, rise, blur, frames, riseFrames, ease, staggerSec, sec, riseSec }, microScale { frames, from, ease, sec }, wordPush { reveal, slide, over, char, space, gap, accel, revealSec, slideSec, gapSec }, subtitle { from, to, rise } }`.
+The frame counts are the original numbers (soft-blur in output frames, the other two in frames at 30 fps) and stay as studio's defaults;
+the `...Sec` tokens are the same timings in seconds, null by default, and win when set, so a style's timing does not change with the frame rate.
 `poseRate` (poses per second for pose sequences, default the clock's rate or 10).
 **Quantised clock** (C): `clock: { poses: 10, seed: 1, jitterPx: 1.4, jitterDeg: 0.35 }` evaluates everything except the recording (stills, pieces, callouts, captions, transitions that are `stepped`, the group's tilt and jitter) at `poses` a second, each pose held, with per-pose jitter from a seeded generator (never `Math.random`: same seed, same video). The recording and its camera always run at full rate.
+The ticks are on the **output frame count** (every multiple of `step` frames), not on each scene's own start: two scenes in a transition, the transition's steps (`stepped`), pose sequences, the callout marks and, with `post.grainClock: 'pose'`, the grain all change on the same frames. A scene begins on its first tick, so its first pose may be held up to one pose long.
 
 ### camera
 `ease`: `{ type: 'bezier', curve: [0.65,0,0.35,1] }` (today) or `{ type: 'spring', stiffness: 320, damping: 40, mass: 0.92 }` (overdamped: no overshoot; the spring's step response is stretched so it has settled when the keyframe's `atSec` arrives). `motionBlur`: `{ shutter: 0.5, samples: 6 }` averages camera poses between a moment ago and now (only while the camera moves; the cost is the window pass times `samples`).
 
 ### transition
-`default` (`zoom-blur`), `sec` (0.45, used for zoom-blur and fade; the others have natural lengths), `stepped` (all transitions on the quantised clock), `params { zoomBlur { scaleIn, scaleOut, sigma }, focusPull { bright, brightIn } }`
-(focus-pull brightens by 1.3: a flash on a dark ground, lower it), `custom { name: { sec, stepped, glsl } }` (below). All built-in transitions work in every style; in the `shared` model they pass through the background, not the matte.
+`default` (`zoom-blur`), `sec` (0.45, used for zoom-blur and fade; the others have natural lengths), `stepped` (all transitions on the quantised clock), `params`: `zoomBlur { scaleIn 0.9, scaleOut 1.12, sigma 16 }`, `focusPull { bright 1.3, brightIn 1.25, sigma 16, scaleOut 1.05, scaleIn 0.97 }`,
+`pushThrough { scale 2.4, scaleIn 0.68, settle 1.02, sigma 14, sigmaIn 0.7 }`, `whipPan { travel 1.1, stretch 0.12, blur 24 }` (the numbers in each are studio's: focus-pull brightens by 1.3, a flash on a dark ground, lower it; sigma and blur are px, travel is fractions of the frame), `custom { name: { sec, stepped, glsl } }` (below). All built-in transitions work in every style; in the `shared` model they pass through the background, not the matte.
 
 ## Builders (E8, F)
 
@@ -179,12 +211,27 @@ A style can replace the HTML of any piece with `build: { title, issue, list, cap
 - issue: an element `id="card"` holding `.piece[data-p="title" | "quote" | "reporter"]`; the card is captured without its pieces.
 - list: `head`, `i0, i1, ...`.
 - caption: one element `id="pill"`; `ctx.pos` has the positioned wrapper (`ctx.pos.css`) to put it in, and `tag, text, color, size`. Elements with `data-type` are what the `type` entrance reveals (glyph edges are measured from them).
-- calloutChip: `id="chip"` (label in `ctx.label`).
+- calloutChip: `id="chip"` (label in `ctx.label`). The context also has `callout` (the whole callout), `scene`, `index`, `calloutIndex` and `side` (`'above'` or `'below'`: where the engine puts the label, below when the box is near the top of the recording). A style with its own chip builder gets one picture per callout and side.
 - window: HTML placed inside the shell box (`ctx.box` outer, `ctx.view` the recording's rectangle, `ctx.insets`, `ctx.label` the tag or take name, `ctx.radius`). Set `window.insets` to say where the recording sits; a caption with `placement: 'slot'` goes in the bottom inset strip.
 - calloutMark: HTML for a callout given its size at 2x (`ctx.w`, `ctx.h`, `ctx.callout`): it is captured at 2x so it stays sharp when the camera zooms and follows the camera like the ring. Return `poses`, an array of inner-HTML strings, to get a pose sequence.
-- furniture: HTML drawn on the background outside the window for every non-title scene (a running header, a folio): `ctx.scene`, `ctx.index`.
+- furniture: HTML drawn on the background, outside the window, on **every** scene type (title, issue, list, split, clip, image: a running header, a folio). `ctx.scene`, `ctx.index` and `ctx.sceneType` (`'title' | 'issue' | 'list' | 'split' | 'clip' | 'image'`) are given; return `null` for the scenes that should have none. (Furniture used to be offered on clip, image and split scenes only, and drawn on clip and image only: a builder written then should return `null` for the other types if it bakes its header into card pieces.)
 
 **Poses** (D): any piece (and a callout mark) may return `poses: { name: [html0, html1, ...] }` (for the mark: just the array); each is captured once and shown in turn at `motion.poseRate`. Frame k of the callout is pose `floor(seconds * rate)`, clamped.
+
+**Extra pieces.** Besides the fixed names above, any other `data-p="name"` element in a title, issue, list, split or caption builder's HTML is captured as its own picture, and the builder can return `pieces` to say when and how it enters:
+
+```js
+return { html, poses: { underline: [html0, html1, html2, html3] },
+  pieces: { sticker:   { at: 0.6, enter: 'pop', sec: 0.4, from: 0.4 },        // pops on the title 0.6 s in, with a small overshoot
+            underline: { at: 0.3, rate: 8 },                                  // plays its poses from 0.3 s at 8 a second (draw-on)
+            tick0:     { at: 0.5, enter: 'fade' } } };
+```
+`at` is seconds after the owner's own start (the scene for a title, card, list or split; the caption's entrance for a caption).
+`enter`: `fade` (default), `blur` (`px`, `sec`), `rise` (`rise` u, `sec`), `type` (`cps`, `caret`; the element needs `data-type`), `pop` (scale from `from`, 0.6, to 1 with a small overshoot). Also `sec`, `opacity` (the level it settles at),
+`rate` / `loop` (pose sequence speed; loop repeats it, else it holds the last pose), `until` and `exitSec` (fade out), `z` (draw order; the default is by name). Extras inside a caption are drawn with the caption (and fade out with it); inside a card they move with it.
+They are never part of the card's or pill's own picture. An extra's pose sequence starts when the extra does.
+
+**Fixed pieces play poses too.** A title's `sub`, `all`, a card's `title` / `quote` / `reporter`, a list's `head` and items, a caption's pill and the split labels may all return `poses` (`poses: { i0: [...] }` for a named piece; an array for a caption's pill): they play on the scene's clock (a caption's from its own start) at `motion.poseRate`, holding the last pose.
 
 **Emphasis** (G): in any title, caption, list item or card line `*word*` marks the accented word (accent colour, no background); `\*` is a literal asterisk. Default builders do it through `ctx.rich(text)`; custom builders should too. `stripEmphasis(text)` (layout.js) returns the plain text for caption files and chapters.
 
@@ -209,11 +256,21 @@ vec4 transition(vec2 uv) {          // uv 0..1, y down
   return mix(getTo(uv), getFrom(uv), m);   // premultiplied RGBA
 }` } } }
 ```
-The contract is a pure function of the two scene layers (`getFrom(uv)`, `getTo(uv)`, transparent where a scene has nothing; the background is composited under the result), `uProgress` (0..1), `uRes` and `uPal[0..3]` (matte, foreground, accent, dim colour). A spec uses it by name in `transition` / `transitions`. `stepped` evaluates progress on the quantised clock.
+The contract is a pure function of the two scene layers (`getFrom(uv)`, `getTo(uv)`, transparent where a scene has nothing; the background is composited under the result), `uProgress` (0..1), `uRes`, `uPal[0..3]` (matte, foreground, accent, dim colour) and `uDir` (`vec2`, y down: the transition's `"direction"` as a unit vector, left `(-1,0)` when none is given; a spec writes `{ "type": "my-wipe", "direction": "down" }`). A spec uses it by name in `transition` / `transitions`. `stepped` evaluates progress on the quantised clock.
 
 ## Rotation (E)
 
 Pieces take a rotation in the engine (`piece(id, { rot })`, radians about their centre; the clock's jitter uses it), and the window group takes `tilt`. Both are applied in the recording pass too (the video shader works in window space), so the picture, its corners and its callouts stay locked together. Keep angles small (a few degrees); edges stay antialiased.
+
+## Determinism
+
+The frames handed to the encoder are identical between runs for every style except those whose builders use SVG
+filters (`feTurbulence`, `feDisplacementMap`, as `sketch` does): Chrome rasterises a filter's output with a few
+pixels that differ by one or two levels from one browser launch to the next (one pixel in one piece, held for a
+whole pose, so a few dozen frames differ by one level in a few pixels). It is the capture, not the GPU draw or the
+hardware encoder, and flags did not remove it (GPU raster off, GPU off, one raster thread, one capture tab, five
+captures per piece and taking the commonest: all still varied). A style that needs bit-identical repeat renders
+should draw its noise in a shader or bake it into a PNG, not in an SVG filter. Measure it with `--hash-frames`.
 
 ## Testing a style
 
@@ -223,6 +280,9 @@ node scripts/compose.mjs video.json --style paperback --still 12 --still-out /tm
 node scripts/compose.mjs video.json --style paperback --out /tmp/a.mp4 --sheet /tmp/a.png --json
 UI_DEMO_EXTRA_STYLES=/abs/path/mystyle.js node scripts/compose.mjs ...   # try a style that is not registered yet
 node scripts/check-video.mjs video.json          # validates "style" (unknown names list the valid ones)
+node scripts/compose.mjs video.json --still 3 --still-out /tmp/a.png --dump-stills /tmp/pieces   # every captured piece, named by its id (an index.txt lists them)
+node scripts/compose.mjs video.json --out /tmp/a.mp4 --hash-frames /tmp/a.hash                  # a SHA-1 of each frame's pixels just before the encoder (compare two runs with diff)
+COMPOSE_CHROME_ARGS="--disable-gpu-rasterization" node scripts/compose.mjs ...                   # extra Chrome flags, for experiments
 ```
 
 Check: text contrast at 375 px, the window edge against the background, captions over bright and dark parts of the page, the transitions in the middle of their run (not only the ends), and a title-only render of your background with the final pass off and on (banding). Keep every style above 120 fps on the sample; `renderFps` is in the `--json` output. The default `studio` must stay pixel-identical: render the sample before and after a change to shared code and compare (`ffmpeg -lavfi ssim`).
