@@ -48,6 +48,7 @@ export default {
     chrome: { kind: 'none' },       // none | browser: { height, fill, lights, url, urlText, color }
     drift: null,                    // { to: 1.035 } scene-long push-in of the whole window
     tilt: 0, tiltJitter: 0,         // degrees; a small constant tilt of the window group
+    jitter: false,                  // with motion.clock: the group shakes a little each pose
   },
   split: { gap: 0.025, width: 0.92, height: 0.7, top: 0.12, labelSize: 0.0135, labelRise: 0.055 },
 
@@ -56,7 +57,7 @@ export default {
     placement: 'under',             // under (in the band below the window) | overlay (inside, at the bottom) | slot (the shell's own strip)
     align: 'center', size: 0.0135, offset: 0.05, inset: 0.03,   // size: fraction of W; offset: bottom gap when there is no band (H); inset: overlay gap (H)
     enter: 'fade', delay: 0.25, exit: 0.35, rise: 0.8,           // enter: fade|blur|rise|type; rise in caption heights
-    blurPx: 12, blurSec: 0.22, typeCps: 30, caret: 'bar',         // blur: start radius and duration; type: chars/s; caret bar|block|none
+    blurPx: 12, blurSec: 0.22, typeCps: 30, caret: 'bar', caretColor: null,         // blur: start radius and duration; type: chars/s; caret bar|block|none
     color: '#fff', weight: 500, textShadow: null,     // textShadow: CSS text-shadow for bar and mono (plain has its own)
     pill: { gap: 0.7, padY: 0.55, padX: 1.05, radius: 999, background: 'rgba(17,17,20,0.92)', shadow: '0 1px 0 rgba(255,255,255,0.06) inset,0 8px 24px rgba(0,0,0,0.18)', border: null },
     glass: { gap: 0.7, padY: 0.6, padX: 1.1, radius: 999, blur: 18, tint: 'rgba(24,24,30,0.38)', saturate: 1.25, border: 'rgba(255,255,255,0.16)', shadow: '0 8px 30px rgba(0,0,0,0.25)' },
@@ -78,13 +79,14 @@ export default {
 
   callout: {
     mark: 'ring',                   // ring | a style builder (build.calloutMark)
-    pad: 8, radius: 10, ringWidth: 2.5, fillAlpha: 20 / 255, dimAlpha: 0.42, dimColor: '#0a0a0e', scaleIn: 0.96, forSec: 2.5, enterSec: 0.35, exitSec: 0.25,
+    pad: 8, radius: 10, ringWidth: 2.5, ringColor: null, dash: 0, fillAlpha: 20 / 255, dimAlpha: 0.42, dimColor: '#0a0a0e', scaleIn: 0.96, forSec: 2.5, enterSec: 0.35, exitSec: 0.25,
     chip: { size: 22, weight: 600, padY: 6, padX: 12, radius: 999, background: null, color: null },
   },
   logo: {},
 
   motion: {
     spring: { damping: 200 },       // the house spring for every enter
+    poseRate: null,                 // pose sequences: poses a second (default: the clock's, else 10)
     clock: null,                    // { poses: 10, seed: 1, jitterPx: 1.4, jitterDeg: 0.35 }: quantise everything except the recording
     card: { rise: 14, rows: [0.15, 0.45, 0.65], alpha: [1, 0.85, 0.55] },
     list: { headRise: 14, start: 0.45, step: 0.16, dx: -18 },
