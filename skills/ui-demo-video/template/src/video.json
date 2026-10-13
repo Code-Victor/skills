@@ -1,0 +1,63 @@
+{
+  "width": 1920,
+  "height": 1080,
+  "fps": 60,
+  "theme": {
+    "background": "radial-gradient(120% 90% at 50% 0%, #f5f6fb 0%, #e4e7f2 100%)",
+    "foreground": "#111114",
+    "accent": "#3b6bff",
+    "tagColors": {
+      "Before": "#e5484d",
+      "After": "#3b6bff"
+    }
+  },
+  "transition": "zoom-blur",
+  "transitionSec": 0.45,
+  "transitions": ["focus-pull", "zoom-blur", "push-through", "focus-pull"],
+  "scenes": [
+    {
+      "type": "title",
+      "text": "What changed, in a few words",
+      "subtitle": "Ticket or release name",
+      "durationSec": 4
+    },
+    {
+      "type": "issue",
+      "source": "Linear",
+      "id": "ABC-123",
+      "status": "Fixed",
+      "title": "The ticket's title, as reported",
+      "quote": "The part of the report that says what went wrong.",
+      "reporter": "Reported by a teammate",
+      "durationSec": 7
+    },
+    {
+      "type": "clip",
+      "src": "clips/before.mp4",
+      "aspect": 1.6,
+      "durationSec": 6,
+      "tag": "Before",
+      "caption": "What was wrong, in one line",
+      "autoCamera": true
+    },
+    {
+      "type": "clip",
+      "src": "clips/after.mp4",
+      "aspect": 1.6,
+      "durationSec": 8,
+      "tag": "After",
+      "captions": [
+        { "atSec": 0, "text": "What it does now" },
+        { "atSec": 4, "text": "And the detail that proves it" }
+      ],
+      "autoCamera": true
+    },
+    {
+      "type": "list",
+      "title": "Shipped",
+      "subtitle": "PR or release",
+      "items": ["The fix, in a few words", "Anything else that changed"],
+      "durationSec": 5
+    }
+  ]
+}

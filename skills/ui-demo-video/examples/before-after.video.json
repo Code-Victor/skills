@@ -1,0 +1,98 @@
+{
+  "width": 1920,
+  "height": 1080,
+  "fps": 60,
+  "theme": {
+    "background": "radial-gradient(120% 90% at 50% 0%, #f4f5fb 0%, #e6e8f2 100%)",
+    "foreground": "#111114",
+    "tagColors": {
+      "Before": "#ff7f76",
+      "After": "#6ebeff"
+    }
+  },
+  "transition": "zoom-blur",
+  "transitionSec": 0.5,
+  "transitions": [
+    null,
+    "cut",
+    null,
+    null,
+    null
+  ],
+  "scenes": [
+    {
+      "type": "title",
+      "text": "404 and error pages, rebuilt",
+      "subtitle": "ABC-456",
+      "durationSec": 2.4
+    },
+    {
+      "type": "clip",
+      "src": "clips/before-chat.mp4",
+      "aspect": 1.6,
+      "durationSec": 3,
+      "tag": "Before",
+      "caption": "A bad chat link: a spinner for 8 seconds..."
+    },
+    {
+      "type": "clip",
+      "src": "clips/before-chat.mp4",
+      "aspect": 1.6,
+      "trimStartSec": 7.3,
+      "durationSec": 3.7,
+      "tag": "Before",
+      "caption": "...then the whole app crashes"
+    },
+    {
+      "type": "clip",
+      "src": "clips/after-chat.mp4",
+      "aspect": 1.6,
+      "durationSec": 4.5,
+      "tag": "After",
+      "caption": "Same link: an instant 404, and you stay in the app"
+    },
+    {
+      "type": "clip",
+      "src": "clips/after-404.mp4",
+      "aspect": 1.6,
+      "durationSec": 15.5,
+      "tag": "After",
+      "caption": "One 404 everywhere, with a mascot that reacts to you",
+      "frame": "stage",
+      "moves": [
+        {
+          "atSec": 0,
+          "zoom": 1
+        },
+        {
+          "atSec": 3,
+          "zoom": 1
+        },
+        {
+          "atSec": 5,
+          "x": 0.56,
+          "y": 0.4,
+          "zoom": 1.35
+        },
+        {
+          "atSec": 13,
+          "x": 0.56,
+          "y": 0.4,
+          "zoom": 1.35
+        },
+        {
+          "atSec": 15,
+          "zoom": 1
+        }
+      ]
+    },
+    {
+      "type": "clip",
+      "src": "clips/after-error.mp4",
+      "aspect": 1.6,
+      "durationSec": 13.5,
+      "tag": "After",
+      "caption": "The error page: five kinds of failure, each with the right fix"
+    }
+  ]
+}
