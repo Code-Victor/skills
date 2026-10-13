@@ -139,6 +139,9 @@ const encoder = String(args.encoder ?? 'x264');
 const lossless = !!args.lossless;
 const jpegQuality = +(args['jpeg-quality'] ?? 95);
 const out = args.out ? resolve(args.out) : null;
+// Written under this name and renamed when the take is whole: a failed take
+// leaves nothing behind, and concurrent takes never share a file.
+const tmpOut = out ? join(dirname(out), `.${basename(out, extname(out))}.${process.pid}.part${extname(out) || '.mp4'}`) : null;
 // Recordings can't be re-rendered, only re-recorded, so never write them
 // where a restart deletes them: /tmp, macOS's per-user temp, or an agent's
 // session scratchpad.
@@ -180,6 +183,7 @@ let ending = false;
 // Whatever happens, the tab goes away and ffmpeg dies with it.
 const cleanup = async () => {
   try { sink?.abort(); } catch {}
+  if (tmpOut) rmSync(tmpOut, { force: true });
   if (tab) await tab.close().catch(() => {});
 };
 const die = async (reason, code = 1) => {
@@ -768,7 +772,6 @@ const distinctFps = (times, windows) => {
 
 let clockId = null;
 let cursorId = null;
-const tmpOut = out ? join(dirname(out), `.${basename(out, extname(out))}.${process.pid}.part${extname(out) || '.mp4'}`) : null;
 
 const takeOnce = async () => {
   events.length = 0;

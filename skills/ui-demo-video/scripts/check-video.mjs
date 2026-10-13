@@ -237,6 +237,11 @@ export function checkDemo(demo) {
     if (!t.url && !demo.url) out.errors.push(`${at}: no url (give the take one or set "url" at the top of the file)`);
     else try { new URL(t.url ?? '', demo.url); } catch { out.errors.push(`${at}: url "${t.url}" is not a URL`); }
     if (t.duration !== undefined && !(t.duration > 0)) out.errors.push(`${at}: duration must be seconds`);
+    // --hide-floating hides small fixed-position widgets, and toasts are exactly that.
+    const floating = t.hideFloating ?? demo.capture?.hideFloating;
+    const keep = t.keep ?? demo.capture?.keep;
+    if (floating && !keep && /toast|sonner|snackbar|notification/i.test(JSON.stringify(t.steps ?? [])))
+      out.warnings.push(`${at}: hideFloating also hides toasts, which these steps look for; add "keep": "<css of the toast container>" or turn hideFloating off`);
     if (!t.steps?.length) out.warnings.push(`${at}: no steps; it records the page sitting still`);
     else checkSteps(at, t.steps, out);
   }

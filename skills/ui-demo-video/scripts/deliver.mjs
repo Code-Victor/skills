@@ -23,7 +23,7 @@
 // out from --max-mb and the duration, so it fits the first time almost always),
 // and a master that already fits is copied, not re-encoded.
 import { spawn } from 'node:child_process';
-import { readFileSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { sceneSpans } from './spec-lib.mjs';
 
@@ -195,6 +195,7 @@ const scan = async () => {
 // ---------------------------------------------------------------- go
 let result;
 try {
+  mkdirSync(outDir, { recursive: true });
   const info = await probe();
   const [pr, , , issues] = await Promise.all([
     lap('pr', () => makePrCopy(info)),

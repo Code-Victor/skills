@@ -387,14 +387,18 @@ if (doCapture) {
         const res = await pool(todo, parallel + 2, async (n) => {
           const s = await runSetup(n, `rehearse-${n}`);
           if (!s.ok) return s;
+          const miss = join(paths.build, 'miss', n);
+          mkdirSync(miss, { recursive: true });
           const file = join(paths.steps, `${n}.rehearse.json`);
           writeFileSync(file, `${JSON.stringify(rehearsalSteps(takes[n].steps), null, 1)}\n`);
           const r = await run(`rehearse-${n}`, process.execPath,
             [join(HERE, 'capture.mjs'), ...captureArgs(takes[n], { rehearse: true, port, stepsFile: file, allowTemp: !!opt.force })],
-            { timeoutSec: 120, cwd: paths.build }); // a miss screenshot lands in build/
+            { timeoutSec: 120, cwd: miss }); // a miss screenshot lands in build/miss/<take>/
           // The log holds the step, the target, the closest candidates and a
           // screenshot path; show it whole (it is short).
-          const body = r.text.split('\n').slice(1).join('\n').trim().split('\n').slice(-40).join('\n');
+          // The step it names is the author's, not the rehearsal's padded copy.
+          const body = r.text.split('\n').slice(1).join('\n').trim().split('\n').slice(-40).join('\n')
+            .replace(/^step (\d+): .*$/m, (m, i) => (takes[n].steps[i] ? `step ${i}: ${JSON.stringify(takes[n].steps[i])}` : m));
           return { ok: r.code === 0, code: r.code, text: r.timedOut ? 'rehearsal timed out' : body };
         });
         const failed = [...res].filter(([, r]) => !r.ok);
@@ -423,7 +427,6 @@ if (doCapture) {
           width: j.width, height: j.height, durationSec: j.durationSec, distinctFps: j.distinctFps, slow: j.slow, wallSec: j.wallSec,
         }, null, 1)}\n`);
         for (const w of j.warnings ?? []) warn(`take ${n}: ${w}`);
-        if (j.distinctFps && j.distinctFps < 40) warn(`take ${n}: only ${j.distinctFps} distinct fps (something heavy was running? retake when the machine is idle)`);
         return { ok: true, j };
       }, true);
       const failed = [...res].filter(([, r]) => !r.ok);
