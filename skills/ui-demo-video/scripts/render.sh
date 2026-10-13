@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Render a Remotion demo project, after checking its video.json.
+# Render a Remotion demo project (the optional renderer; demo.mjs renders without
+# it), after checking its video.json.
 #
 #   scripts/render.sh <project> draft   # ~4x faster: half size, JPEG frames. For judging the cut.
 #   scripts/render.sh <project> final   # 1080p master, PNG frames, CRF 16. Then deliver.mjs.

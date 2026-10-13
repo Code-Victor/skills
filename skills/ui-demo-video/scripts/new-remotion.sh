@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
-# Polished path: create a Remotion project wired to video.json, with the remocn
-# pieces the template uses.
+# The optional Remotion renderer: create a Remotion project wired to video.json,
+# with the remocn pieces the template uses. demo.mjs renders without it (the
+# GPU renderer, compose.mjs); use this for frame "stage" (the tilted 3D shot)
+# or remocn components. See references/remotion-remocn.md.
 #
 #   scripts/new-remotion.sh <dir>
 #   scripts/render.sh <dir> draft                  # judge the cut (~3 min / minute of video)
 #   scripts/render.sh <dir> final                  # the master (~11 min / minute of video)
 #   cd <dir> && npm run dev                        # or preview and scrub in Remotion Studio
 #
-# Put recordings in <dir>/public/clips/ and describe the video in
-# <dir>/src/video.json (same format scripts/assemble.mjs reads).
+# To render a demo.mjs run with it: copy the demo folder's build/video.json to
+# <dir>/src/video.json, and its clips/*.mp4 and clips/*.mp4.events.json to
+# <dir>/public/clips/ (plus any audio, stills or logo at the same relative
+# paths under <dir>/public/). The video.json format is the one demo.mjs resolves.
 #
 # Fast: the first run builds a base project (create-video, npm install, remocn
 # components; about 2 minutes) into ~/.cache/ui-demo-video and every later run
