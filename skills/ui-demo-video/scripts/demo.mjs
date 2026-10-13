@@ -36,6 +36,8 @@
 //                        "before" takes on an old branch, then switching).
 //   --only <stage>       capture | render | deliver: run just that part
 //   --no-deliver         stop after render
+//   --stale-ok           render even if a clip's take changed or its take.json is
+//                        missing (normally that stops with the take's name)
 //   --no-rehearse        skip the dry run
 //   --max-mb 10          size cap for the PR copy
 //   --gif <start:dur>    also a GIF excerpt, e.g. 12:6
@@ -184,6 +186,12 @@ const maxMb = +(opt['max-mb'] ?? 10);
 const stages = []; // { name, sec, note }
 const warnings = [];
 const children = new Set();
+// Every child runs in its own process group, so stopping it stops what it
+// started too (a setup like `sleep 5; echo done` is a shell plus a child).
+const killGroup = (p, sig = 'SIGTERM') => {
+  try { process.kill(-p.pid, sig); } catch { try { p.kill(sig); } catch {} }
+};
+const killAll = () => { for (const c of children) killGroup(c); };
 let current = 'start';
 
 const warn = (m) => { if (!warnings.includes(m)) warnings.push(m); };
@@ -204,12 +212,14 @@ const fail = (stage, lines, code = 1) => {
     for (const s of stages) console.error(`  ${s.name.padEnd(9)} ${String(s.sec).padStart(6)}s  ${s.note ?? ''}`);
     console.error(`FAILED at ${stage}: ${msg}`);
     if (warnings.length) console.error(`warnings (${warnings.length}):\n${warnings.map((w) => `  - ${w}`).join('\n')}`);
+    if (summary.browser) console.error(summary.browser.note);
     console.error(`(${summary.totalSec}s${existsSync(paths.logs) ? `; logs in ${paths.logs}` : ''})`);
   }
-  for (const c of children) try { c.kill('SIGTERM'); } catch {}
+  killAll();
   process.exit(code);
 };
-for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { for (const c of children) try { c.kill('SIGTERM'); } catch {} process.exit(130); });
+for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { killAll(); process.exit(130); });
+process.on('exit', killAll);
 
 const stage = async (name, fn) => {
   current = name;
@@ -236,11 +246,15 @@ const run = (log, cmd, args, { env = {}, cwd = dir, timeoutSec = 0 } = {}) =>
     const file = join(paths.logs, `${log}.log`);
     writeFileSync(file, `$ ${cmd} ${args.join(' ')}\n`);
     const fd2 = openSync(file, 'a');
-    const p = spawn(cmd, args, { cwd, env: { ...process.env, ...env }, stdio: ['ignore', fd2, fd2] });
+    const p = spawn(cmd, args, { cwd, env: { ...process.env, ...env }, stdio: ['ignore', fd2, fd2], detached: true });
     closeSync(fd2);
     children.add(p);
     let timedOut = false;
-    const timer = timeoutSec ? setTimeout(() => { timedOut = true; p.kill('SIGTERM'); }, timeoutSec * 1000) : null;
+    const timer = timeoutSec ? setTimeout(() => {
+      timedOut = true;
+      killGroup(p);
+      setTimeout(() => killGroup(p, 'SIGKILL'), 5000).unref(); // if it ignores SIGTERM
+    }, timeoutSec * 1000) : null;
     p.on('error', (e) => { children.delete(p); done({ code: 127, file, text: `could not start ${cmd}: ${e.message}`, timedOut }); });
     p.on('close', (code, signal) => {
       clearTimeout(timer);
@@ -280,8 +294,12 @@ if (only && !['capture', 'render', 'deliver'].includes(only)) {
   console.error(`--only must be capture, render or deliver (got "${only}")`);
   process.exit(2);
 }
+if (only && only !== 'capture' && opt.takes) {
+  console.error(`--takes chooses which takes to record, so it goes with --only capture (or alone), not --only ${only}`);
+  process.exit(2);
+}
 const justCapture = only === 'capture' || (!only && !!opt.takes);
-const doCapture = !only || only === 'capture' || !!opt.takes;
+const doCapture = !only || only === 'capture';
 const doRender = !justCapture && (!only || only === 'render');
 const doDeliver = !justCapture && !opt['no-deliver'] && (!only || only === 'deliver');
 let name;
@@ -359,6 +377,10 @@ if (doCapture) {
       // point is that nothing shows on screen.
       const r = await run('chrome', join(HERE, 'chrome.sh'), [], { env: { PORT: String(port) }, timeoutSec: 90 });
       if (r.code !== 0) return fail('chrome', [`chrome.sh exited ${r.code}`, tail(r.text)]);
+      summary.browser = {
+        port, running: true,
+        note: `the background browser is still running on port ${port}; stop it with ${port === 9222 ? '' : `PORT=${port} `}${join(HERE, 'chrome.sh')} --stop`,
+      };
       return tail(r.text, 1).replace(/^Chrome /, '').replace(/ \(profile: .*$/, ')');
     });
 
@@ -446,6 +468,18 @@ if (justCapture) await finish();
 let specPath = join(paths.build, 'video.json');
 if (doRender) {
   await stage('camera', async () => {
+    // A clip is only trusted if the take that made it is still the take
+    // demo.json describes: a failed re-record removes take.json and leaves the
+    // old clip behind, and a changed step leaves a clip of the old steps.
+    if (!opt['stale-ok']) {
+      const stale = used.flatMap((n) => {
+        const t = readTake(n);
+        if (!t) return [`take "${n}": no take.json next to its clip (the last recording failed, or the clip was not recorded by this tool)`];
+        if (t.hash !== takeHash(takes[n])) return [`take "${n}": demo.json changed since it was recorded`];
+        return [];
+      });
+      if (stale.length) return fail('camera', [...stale, `Record ${stale.length === 1 ? 'it' : 'them'} (demo.mjs ${basename(demoFile)} --takes ${used.filter((n) => stale.some((m) => m.startsWith(`take "${n}"`))).join(',')}), or render the old clips anyway with --stale-ok`]);
+    }
     const aspects = {};
     for (const n of used) {
       let w; let h;
@@ -543,6 +577,7 @@ async function finish() {
     const o = summary.outputs;
     if (Object.keys(o).length) console.log(`outputs:\n${Object.entries(o).map(([k, v]) => `  ${k.padEnd(9)} ${v}`).join('\n')}`);
     if (looks.length) console.log(`look at:\n${looks.map((l) => `  ${l}`).join('\n')}`);
+    if (summary.browser) console.log(summary.browser.note);
   }
   process.exit(0);
 }
