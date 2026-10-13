@@ -88,8 +88,21 @@ export function startEncoder({ out, w, h, fps = 60, crf = 14, encoder = 'x264', 
   let err = '';
   ff.stderr.on('data', (d) => (err += d));
   let dead = null;
+  let broken = false;
   const exited = new Promise((res) => ff.on('close', (code) => { dead = code; res(code); }));
-  ff.stdin.on('error', () => {});
+  ff.stdin.on('error', () => { broken = true; });
+  // ffmpeg's last words, for the message when it dies under us.
+  const lastWords = () => err.trim().split('\n').slice(-8).join('\n') || '(no output)';
+  const died = () => new Error(`ffmpeg exited early (code ${dead}):\n${lastWords()}`);
+  // Wait for room in the pipe, but not past ffmpeg's death: a pipe nobody reads
+  // never drains.
+  const roomOrDeath = () => new Promise((res) => {
+    const done = () => {
+      ff.stdin.off('drain', done); ff.stdin.off('error', done); ff.stdin.off('close', done); ff.off('close', done);
+      res();
+    };
+    ff.stdin.once('drain', done); ff.stdin.once('error', done); ff.stdin.once('close', done); ff.once('close', done);
+  });
   ff.stdin.write(mkvHeader({ w, h, png }));
 
   // Hold one frame back: if the next one lands in the same 1/fps slot it
@@ -105,12 +118,18 @@ export function startEncoder({ out, w, h, fps = 60, crf = 14, encoder = 'x264', 
     get frames() { return written; },
     // Returns a promise that resolves when ffmpeg can take more (backpressure).
     async push(buf, t) {
-      if (dead !== null) throw new Error(`ffmpeg exited early:\n${err.trim()}`);
+      if (dead !== null) throw died();
       const slot = Math.round(t * fps);
       let ok = true;
       if (held && slot > held.slot) ok = write(held);
       held = { buf, t, slot };
-      if (!ok) await new Promise((r) => ff.stdin.once('drain', r));
+      if (!ok) {
+        await roomOrDeath();
+        // The pipe broke before the process finished closing: let it, so the
+        // message carries what ffmpeg said.
+        if (dead === null && broken) await Promise.race([exited, new Promise((r) => setTimeout(r, 2000))]);
+        if (dead !== null) throw died();
+      }
     },
     // End the stream at page time `end`: the last frame is held until then.
     async finish(end) {
@@ -121,7 +140,7 @@ export function startEncoder({ out, w, h, fps = 60, crf = 14, encoder = 'x264', 
       }
       ff.stdin.end();
       const code = await exited;
-      if (code !== 0) throw new Error(`ffmpeg failed (${code}):\n${err.trim()}`);
+      if (code !== 0) throw new Error(`ffmpeg failed (${code}):\n${lastWords()}`);
     },
     abort() { try { ff.kill('SIGKILL'); } catch {} },
   };
