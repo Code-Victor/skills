@@ -435,10 +435,21 @@ if (doCapture) {
         const s = await runSetup(n, `record-${n}`);
         if (!s.ok) return s;
         const t = takes[n];
-        const r = await run(`record-${n}`, process.execPath,
-          [join(HERE, 'capture.mjs'), ...captureArgs(t, { port, stepsFile: stepsFile(n), out: clipFile(n), allowTemp: !!opt.force }), '--json'],
+        const record = (extra = []) => run(`record-${n}`, process.execPath,
+          [join(HERE, 'capture.mjs'), ...captureArgs(t, { port, stepsFile: stepsFile(n), out: clipFile(n), allowTemp: !!opt.force }), '--json', ...extra],
           { timeoutSec: Math.max(300, t.duration * 25 + 120) });
-        const j = lastJson(r.text);
+        // capture.mjs re-records a choppy take by itself, slower, from a fresh
+        // page. It cannot re-run a `setup` command, so for a take that has one
+        // the second pass happens here, after the setup has run again.
+        let r = await record(t.setup ? ['--no-retry'] : []);
+        let j = lastJson(r.text);
+        if (t.setup && r.code === 0 && j?.ok && j.suggestedSlow && (t.options?.slow ?? 'auto') === 'auto') {
+          say(`  take ${n} came out choppy; recording it again at slow ${j.suggestedSlow}`);
+          const again = await runSetup(n, `record-${n}`);
+          if (!again.ok) return again;
+          r = await record(['--no-retry', '--slow', String(j.suggestedSlow)]);
+          j = lastJson(r.text);
+        }
         if (r.code !== 0 || !j?.ok) {
           const why = r.timedOut ? 'timed out (killed by the runner; the machine may be overloaded, see build/logs)' : (j?.error ?? tail(r.text, 8));
           return { ok: false, code: r.code, text: why };
