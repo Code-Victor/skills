@@ -15,14 +15,17 @@ const j = (v) => JSON.stringify(v);
 // a token change can never hand back a stale picture.
 let STYLE_HASH = '';
 export const setStyleHash = (h) => { STYLE_HASH = h; };
+/** The logo treatment, as a suffix for the logo's picture name (empty for none, so the plain logo keeps its name). */
+const logoKey = (style) => { const k = style?.logo; return k && (k.filter || k.plate) ? `|${j([k.filter ?? null, k.plate ?? null])}` : ''; };
 export const ID = {
   bg: () => `bg|${STYLE_HASH}`,
   shell: (b, radius, shadow = true, tag = '') => `shell|${STYLE_HASH}|${j([b.w, b.h, b.left, b.top].map(r2))}|${r2(radius)}|${shadow ? 1 : 0}|${tag}`,
-  ring: (b, radius) => `ring|${STYLE_HASH}|${j([b.w, b.h].map(r2))}|${r2(radius)}`,
+  ring: (b, radius) => `ring|${STYLE_HASH}|${j([b.w, b.h, b.left, b.top].map(r2))}|${r2(radius)}`,   // position too: two equal-size boxes (a split) must not share one picture
   pill: (top, tag, color, text, extra = '') => `pill|${STYLE_HASH}|${top}|${tag ?? ''}|${color}|${text}|${extra}`,
-  chip: (label, accent) => `chip|${STYLE_HASH}|${accent}|${label}`,
+  chip: (label, accent, extra = '') => `chip|${STYLE_HASH}|${accent}|${label}${extra ? `|${extra}` : ''}`,
   mark: (w, h, kind) => `mark|${STYLE_HASH}|${r2(w)}|${r2(h)}|${kind}`,
-  logo: (src, h) => `logo|${src}|${r2(h)}`,
+  logo: (src, h, style) => `logo|${src}|${r2(h)}${logoKey(style)}`,
+  scrim: (view, hgt, radius, color) => `scrim|${STYLE_HASH}|${j([view.w, view.left, view.top, hgt].map(r2))}|${r2(radius)}|${color}`,
   card: (i) => `scene${i}|${STYLE_HASH}|card`,
   piece: (i, name) => `scene${i}|${STYLE_HASH}|${name}`,
 };
@@ -100,6 +103,10 @@ export const bandTop = (spec, style, scene) => {
 };
 export const tagColorOf = (spec, style, tag) => (tag ? style.palette.tagColors?.[tag] : undefined) ?? style.palette.tagFallback;
 export const accentOf = (style) => style.palette.accent;
+/** The title's entrance: the scene's own `effect`, else the style's `title.enter`, else soft-blur-in. */
+export const effectOf = (style, scene) => scene.effect ?? style.title?.enter ?? 'soft-blur-in';
+/** Does a callout chip depend on the callout and its scene (the style has its own builder)? Then its picture is named per callout and side. */
+export const chipKey = (style, index, ci, side) => (style.builders?.includes('calloutChip') ? `${side}|${index}.${ci}` : '');
 
 /** A small tag for shell stills: changes when the shell's HTML depends on the scene (a builder that prints the tag, or a chrome bar). */
 export const shellTag = (style, scene) => {
@@ -125,7 +132,7 @@ export const captionPos = (spec, style, scene) => {
     padLeft = l.view.left + W * 0.02;
   } else if (c.placement === 'slot' && l.ins.b > 0) {
     css = `left:${l.outer.left}px;width:${l.outer.w}px;top:${l.view.top + l.view.h}px;height:${l.ins.b}px`; key = `s${r2(l.view.top + l.view.h)}`;
-    padLeft = l.outer.left + W * 0.012;
+    padLeft = W * 0.012;   // relative to the strip (the wrapper already starts at outer.left)
   } else { const t = l.outer.top + l.outer.h; css = `left:0;right:0;top:${t}px;bottom:0`; key = `${t}`; }
   return { css, key: `${key}${left ? 'L' : ''}`, align: left ? 'flex-start' : 'center', padLeft: left ? padLeft : 0 };
 };

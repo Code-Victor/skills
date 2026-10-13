@@ -16,7 +16,9 @@
 //   uv 0..1, y DOWN. Read the layers with getFrom(uv) / getTo(uv) (premultiplied
 //   RGBA; transparent where a scene has nothing, the shared background is
 //   composited UNDER the result), and uProgress (0..1), uRes, uPal[0..3] (matte,
-//   foreground, accent, dim colour). Return premultiplied RGBA.
+//   foreground, accent, dim colour) and uDir (unit vector, y DOWN, from the
+//   transition's "direction": left (-1,0) is the default, right, up, down).
+//   Return premultiplied RGBA.
 
 const BG_HEAD = `#version 300 es
 precision highp float;
@@ -116,9 +118,9 @@ export const backgroundParams = (bg, u) => {
 
 const TR_HEAD = `#version 300 es
 precision highp float;
-uniform sampler2D uFrom, uTo; uniform float uProgress; uniform vec3 uPal[4]; uniform vec2 uRes;
+uniform sampler2D uFrom, uTo; uniform float uProgress; uniform vec3 uPal[4]; uniform vec2 uRes, uDir;
 in vec2 vPx; out vec4 o;
 vec4 getFrom(vec2 uv){ return texture(uFrom, vec2(uv.x, 1. - uv.y)); }
 vec4 getTo(vec2 uv){ return texture(uTo, vec2(uv.x, 1. - uv.y)); }
 `;
-export const transitionProgram = (gl, name, glsl) => gl.customProgram(`tr|${name}|${glsl.length}`, TR_HEAD + glsl + '\nvoid main(){ o = transition(vPx / uRes); }', ['uFrom', 'uTo', 'uProgress', 'uPal']);
+export const transitionProgram = (gl, name, glsl) => gl.customProgram(`tr|${name}|${glsl.length}`, TR_HEAD + glsl + '\nvoid main(){ o = transition(vPx / uRes); }', ['uFrom', 'uTo', 'uProgress', 'uPal', 'uDir']);

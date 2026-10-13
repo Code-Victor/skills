@@ -37,11 +37,12 @@ const IGN = `float ign(vec2 p){ return fract(52.9829189 * fract(dot(p, vec2(0.06
 const QUAD = `#version 300 es
 precision highp float;
 uniform sampler2D uTex; uniform vec4 uUV; uniform vec2 uTexSize;
-uniform float uOpacity, uBright, uSigma, uClipX;
+uniform float uOpacity, uBright, uSigma, uClipX; uniform vec2 uClipY, uMaskY;
 in vec2 vC; in vec2 vPx; out vec4 o;
 vec4 tap(vec2 uv){ return (uv.x < 0. || uv.y < 0. || uv.x > 1. || uv.y > 1.) ? vec4(0.) : texture(uTex, uv); }
 void main(){
   if (uClipX >= 0. && vPx.x > uClipX) discard;
+  if (vPx.y < uClipY.x || vPx.y > uClipY.y || vPx.y < uMaskY.x || vPx.y > uMaskY.y) discard;
   vec2 uv = mix(uUV.xy, uUV.zw, vC);
   vec4 c;
   if (uSigma > 0.3) {                       // 9 x 9 gaussian taps spaced 0.75 sigma apart
@@ -157,7 +158,7 @@ void main(){ o = uColor; }`;
 
 const POST = `#version 300 es
 precision highp float;
-uniform sampler2D uTex; uniform vec2 uRes; uniform float uFrame, uDither, uGrain, uGrainSize, uVig, uVigSoft;
+uniform sampler2D uTex; uniform vec2 uRes; uniform float uFrame, uGrainFrame, uDither, uGrain, uGrainSize, uVig, uVigSoft;
 in vec2 vPx; out vec4 o;
 ${IGN}
 void main(){
@@ -169,7 +170,7 @@ void main(){
   }
   vec2 seed = vPx + 5.588238 * mod(uFrame, 64.);
   if (uGrain > 0.) {                                         // luminance film grain, triangular, at uGrainSize px
-    vec2 g = floor(vPx / uGrainSize) + 5.588238 * mod(uFrame, 64.);
+    vec2 g = floor(vPx / uGrainSize) + 5.588238 * mod(uGrainFrame, 64.);
     c += (ign(g) + ign(g + vec2(37., 17.)) - 1.) * uGrain;
   }
   if (uDither > 0.) c += vec3(ign(seed) + ign(seed + vec2(37., 17.)) - 1., ign(seed + vec2(11., 29.)) + ign(seed + vec2(53., 3.)) - 1., ign(seed + vec2(7., 41.)) + ign(seed + vec2(23., 59.)) - 1.) * (uDither / 255.);
@@ -183,14 +184,14 @@ export class GL {
     if (!gl) throw new Error('WebGL2 is not available in this Chrome');
     this.float = !!gl.getExtension('EXT_color_buffer_float');
     this.progs = {
-      quad: this.program(QUAD, ['uTex', 'uUV', 'uTexSize', 'uOpacity', 'uBright', 'uSigma', 'uClipX']),
+      quad: this.program(QUAD, ['uTex', 'uUV', 'uTexSize', 'uOpacity', 'uBright', 'uSigma', 'uClipX', 'uClipY', 'uMaskY']),
       video: this.program(VIDEO, ['uTex', 'uWin', 'uRadius', 'uTopR', 'uOpacity', 'uSrcOrigin', 'uSrcPerPx', 'uTexSize', 'uK', 'uN', 'uOrigin0', 'uPer0']),
       callout: this.program(CALLOUT, ['uWin', 'uWinR', 'uTopR', 'uBox', 'uBoxR', 'uRing', 'uOpacity', 'uFillA', 'uDimA', 'uAccent', 'uDim', 'uDash']),
       blur: this.program(BLUR, ['uTex', 'uDir', 'uSigma']),
       glass: this.program(GLASS, ['uA', 'uB', 'uBox', 'uRad', 'uOpacity', 'uHasB', 'uSat', 'uTint']),
       grade: this.program(GRADE, ['uTex', 'uSat', 'uDim', 'uOpacity', 'uTint', 'uUV']),
       solid: this.program(SOLID, ['uColor']),
-      post: this.program(POST, ['uTex', 'uFrame', 'uDither', 'uGrain', 'uGrainSize', 'uVig', 'uVigSoft']),
+      post: this.program(POST, ['uTex', 'uFrame', 'uGrainFrame', 'uDither', 'uGrain', 'uGrainSize', 'uVig', 'uVigSoft']),
     };
     this.custom = new Map();
     this.xf = null;
@@ -292,7 +293,7 @@ export class GL {
   full() { return { x: 0, y: 0, w: this.cw, h: this.ch }; }
 
   // ---------------------------------------------------------- draws
-  /** A still (or a scene layer) at a rectangle. `o`: opacity, bright, sigma (glyph blur), fbo (flip v), clipX (hide right of this x). */
+  /** A still (or a scene layer) at a rectangle. `o`: opacity, bright, sigma (glyph blur), fbo (flip v), clipX (hide right of this x), clipY [y0, y1] (hide outside that band, in the quad's own moved position), maskY (the same but fixed on screen). */
   quad(tex, r, o = {}) {
     const gl = this.gl, P = this.progs.quad;
     this.use(P, r); this.bind(tex);
@@ -301,6 +302,8 @@ export class GL {
     gl.uniform2f(P.u.uTexSize, tex.w, tex.h);
     gl.uniform1f(P.u.uOpacity, o.opacity ?? 1); gl.uniform1f(P.u.uBright, o.bright ?? 1); gl.uniform1f(P.u.uSigma, o.sigma ?? 0);
     gl.uniform1f(P.u.uClipX, o.clipX ?? -1);
+    gl.uniform2f(P.u.uClipY, ...(o.clipY ?? [-1e9, 1e9]));
+    gl.uniform2f(P.u.uMaskY, ...(o.maskY ?? [-1e9, 1e9]));
     this.fill();
   }
   solid(r, rgb, a) {
@@ -371,7 +374,7 @@ export class GL {
   post(tex, frame, o) {
     const gl = this.gl, P = this.progs.post;
     this.use(P, this.full()); this.bind(tex); gl.uniform1i(P.u.uTex, 0);
-    gl.uniform1f(P.u.uFrame, frame); gl.uniform1f(P.u.uDither, o.dither ?? 0); gl.uniform1f(P.u.uGrain, o.grain ?? 0);
+    gl.uniform1f(P.u.uFrame, frame); gl.uniform1f(P.u.uGrainFrame, o.grainFrame ?? frame); gl.uniform1f(P.u.uDither, o.dither ?? 0); gl.uniform1f(P.u.uGrain, o.grain ?? 0);
     gl.uniform1f(P.u.uGrainSize, o.grainSize ?? 1.5); gl.uniform1f(P.u.uVig, o.vignette ?? 0); gl.uniform1f(P.u.uVigSoft, o.vignetteSoftness ?? 0.6);
     gl.disable(gl.BLEND); this.fill(); gl.enable(gl.BLEND);
   }

@@ -14,7 +14,7 @@
 //            background never pulses.
 
 import { Easing, bezier, cameraAt, cameraTransform, interpolate, makeCameraEase, seeded, spring } from './motion.js';
-import { ID, accentOf, emChars, emWords, has, captionPos, markSize, radiusOf, sceneLayout, shellTag, splitBoxes, tagColorOf } from './layout.js';
+import { ID, accentOf, chipKey, effectOf, emChars, emWords, has, captionPos, markSize, radiusOf, sceneLayout, shellTag, splitBoxes, tagColorOf } from './layout.js';
 import { rgb01 } from './color.js';
 import { backgroundParams, backgroundProgram, transitionProgram } from './shaders.js';
 
@@ -39,7 +39,10 @@ const SOFT = bezier(0.42, 0, 0.58, 1);
 const outQuad = Easing.out(Easing.quad), outCubic = Easing.out(Easing.cubic);
 export const effectFor = (gap, entering, p, W, H, params = {}) => {
   const fx = { opacity: 1, sx: 1, sy: 1, tx: 0, ty: 0, sigma: 0, bright: 1 };
-  const zb = { scaleIn: 0.9, scaleOut: 1.12, sigma: 16, ...params.zoomBlur }, fp = { bright: 1.3, brightIn: 1.25, ...params.focusPull };
+  const zb = { scaleIn: 0.9, scaleOut: 1.12, sigma: 16, ...params.zoomBlur };
+  const fp = { bright: 1.3, brightIn: 1.25, sigma: 16, scaleOut: 1.05, scaleIn: 0.97, ...params.focusPull };
+  const pt = { scale: 2.4, scaleIn: 0.68, settle: 1.02, sigma: 14, sigmaIn: 0.7, ...params.pushThrough };
+  const wp = { travel: 1.1, stretch: 0.12, blur: 24, ...params.whipPan };
   switch (gap.type) {
     case 'zoom-blur': {
       if (entering) { fx.opacity = p; fx.sx = fx.sy = zb.scaleIn + p * (1 - zb.scaleIn); fx.sigma = p < 1 ? (1 - p) * zb.sigma : 0; }
@@ -50,13 +53,13 @@ export const effectFor = (gap, entering, p, W, H, params = {}) => {
     case 'focus-pull': {
       if (!entering) {
         fx.opacity = interpolate(p, [0.42, 0.68], [1, 0], { easing: SOFT });
-        fx.sx = fx.sy = interpolate(p, [0, 0.6], [1, 1.05], { easing: SOFT });
-        fx.sigma = interpolate(p, [0.05, 0.55], [0, 16], { easing: Easing.quad });
+        fx.sx = fx.sy = interpolate(p, [0, 0.6], [1, fp.scaleOut], { easing: SOFT });
+        fx.sigma = interpolate(p, [0.05, 0.55], [0, fp.sigma], { easing: Easing.quad });
         fx.bright = interpolate(p, [0.1, 0.55], [1, fp.bright]);
       } else {
         fx.opacity = interpolate(p, [0.32, 0.52], [0, 1]);
-        fx.sx = fx.sy = interpolate(p, [0.35, 1], [0.97, 1], { easing: outCubic });
-        fx.sigma = interpolate(p, [0.35, 0.9], [16, 0], { easing: outQuad });
+        fx.sx = fx.sy = interpolate(p, [0.35, 1], [fp.scaleIn, 1], { easing: outCubic });
+        fx.sigma = interpolate(p, [0.35, 0.9], [fp.sigma, 0], { easing: outQuad });
         fx.bright = interpolate(p, [0.4, 0.85], [fp.brightIn, 1]);
       }
       break;
@@ -64,12 +67,12 @@ export const effectFor = (gap, entering, p, W, H, params = {}) => {
     case 'push-through': {
       if (!entering) {
         fx.opacity = interpolate(p, [0.4, 0.62], [1, 0], { easing: SOFT });
-        fx.sx = fx.sy = interpolate(p, [0, 0.65], [1, 2.4], { easing: Easing.cubic });
-        fx.sigma = interpolate(p, [0.15, 0.6], [0, 14]);
+        fx.sx = fx.sy = interpolate(p, [0, 0.65], [1, pt.scale], { easing: Easing.cubic });
+        fx.sigma = interpolate(p, [0.15, 0.6], [0, pt.sigma]);
       } else {
         fx.opacity = interpolate(p, [0.3, 0.5], [0, 1]);
-        fx.sx = fx.sy = interpolate(p, [0.3, 0.88, 1], [0.68, 1.02, 1], { easing: outCubic });
-        fx.sigma = interpolate(p, [0.3, 0.75], [14 * 0.7, 0]);
+        fx.sx = fx.sy = interpolate(p, [0.3, 0.88, 1], [pt.scaleIn, pt.settle, 1], { easing: outCubic });
+        fx.sigma = interpolate(p, [0.3, 0.75], [pt.sigma * pt.sigmaIn, 0]);
       }
       break;
     }
@@ -79,15 +82,18 @@ export const effectFor = (gap, entering, p, W, H, params = {}) => {
       const velocity = Math.sin(Math.PI * travel);
       const horizontal = dir === 'left' || dir === 'right';
       const sign = dir === 'left' || dir === 'up' ? -1 : 1;
-      const offset = (entering ? travel - 1 : travel) * 1.1 * sign;     // 110% of the frame
-      const stretch = 1 + velocity * 0.12;
+      const offset = (entering ? travel - 1 : travel) * wp.travel * sign;     // travel: 1.1 = 110% of the frame
+      const stretch = 1 + velocity * wp.stretch;
       if (horizontal) { fx.tx = offset * W; fx.sx = stretch; } else { fx.ty = offset * H; fx.sy = stretch; }
-      fx.sigma = velocity * 24;
+      fx.sigma = velocity * wp.blur;
       break;
     }
   }
   return fx;
 };
+
+/** A transition's direction as a unit vector, y down (left is the default). */
+export const dirVec = (d = 'left') => ({ left: [-1, 0], right: [1, 0], up: [0, -1], down: [0, 1] }[d] ?? [-1, 0]);
 
 const BLUR_EASE = bezier(0.25, 0.6, 0.3, 1);
 
@@ -104,7 +110,14 @@ export class Scenes {
     this.step = this.clock ? Math.max(1, Math.round(this.fps / this.clock.poses)) : 1;
     this.camEase = makeCameraEase(st.camera.ease);
     this.shared = st.canvas.model === 'shared';
-    this.n = 0; this.ql = 0; this.pose = 0;
+    this.n = 0; this.ql = 0; this.pose = 0; this.poseT = 0;
+    // extra pieces a builder asked for (pieces: { name: { at, enter, ... } }), by owner, in a fixed order
+    this.extraIds = new Map();
+    for (const [id, p] of [...R.stills.entries()].sort((x, y) => (x[1].meta?.z ?? 0) - (y[1].meta?.z ?? 0) || (x[0] < y[0] ? -1 : 1))) {
+      if (!p.meta) continue;
+      if (!this.extraIds.has(p.meta.owner)) this.extraIds.set(p.meta.owner, []);
+      this.extraIds.get(p.meta.owner).push(id);
+    }
   }
   /** The overlay clock: the local frame, held for `step` frames when the style quantises (the recording itself never is). */
   q(local) { return this.clock ? Math.floor(local / this.step) * this.step : local; }
@@ -122,7 +135,10 @@ export class Scenes {
    */
   piece(id, o = {}) {
     if ((o.opacity ?? 1) <= 0.001) return;
-    const pid = o.pose !== undefined && this.has(`${id}@${o.pose}`) ? `${id}@${o.pose}` : id;
+    const base = this.R.stills.get(id);
+    let pose = o.pose;
+    if (pose === undefined && base?.poses > 1) pose = this.poseIndex(base, this.poseT);   // a piece with a pose sequence plays it on the current piece clock
+    const pid = pose !== undefined && this.has(`${id}@${pose}`) ? `${id}@${pose}` : id;
     const s = this.still(pid), sc = o.scale ?? 1;
     let dx = o.dx ?? 0, dy = o.dy ?? 0, rot = o.rot ?? 0;
     const ck = this.clock;
@@ -135,10 +151,25 @@ export class Scenes {
       const cx = s.bx + s.bw / 2 + dx, cy = s.by + s.bh / 2 + dy;
       r = { x: cx + (r.x - cx) * sc, y: cy + (r.y - cy) * sc, w: r.w * sc, h: r.h * sc };
     }
+    // clip: in the picture's own coordinates { x (hide right of it), y0, y1 (show only those rows), mask (also show them only inside that band of the screen, which stays put while the picture moves) }
+    let clipX = o.clipX, clipY, maskY;
+    if (o.clip) {
+      const c = o.clip;
+      if (c.x !== undefined) clipX = s.x + dx + c.x;
+      if (c.y0 !== undefined || c.y1 !== undefined) {
+        clipY = [s.y + dy + (c.y0 ?? -1e6), s.y + dy + (c.y1 ?? 1e6)];   // selects those rows of the picture, wherever it has been moved to
+        if (c.mask) maskY = [s.y + (dy - (o.dy ?? 0)) + (c.y0 ?? -1e6), s.y + (dy - (o.dy ?? 0)) + (c.y1 ?? 1e6)];   // and only that band of the screen shows them
+      }
+    }
     const gl = this.gl, prev = gl.xf;
     if (rot) gl.setXf(mul(prev ?? I, about(s.bx + s.bw / 2 + dx, s.by + s.bh / 2 + dy, rot)));
-    gl.quad(s.tex, r, { opacity: o.opacity ?? 1, sigma: o.sigma ?? 0, clipX: o.clipX });
+    gl.quad(s.tex, r, { opacity: o.opacity ?? 1, sigma: o.sigma ?? 0, clipX, clipY, maskY });
     gl.setXf(prev);
+  }
+  /** Which pose of a pose sequence is showing `t` seconds in (`m`: { rate, loop } from a builder's piece settings). */
+  poseIndex(s, t, m) {
+    const n = s.poses, rate = m?.rate ?? this.style.motion.poseRate ?? this.clock?.poses ?? 10, k = Math.floor(Math.max(0, t) * rate);
+    return m?.loop ? k % n : Math.min(n - 1, k);
   }
   background() { this.gl.quad(this.still(ID.bg()).tex, { x: 0, y: 0, w: this.W, h: this.H }); }
 
@@ -172,27 +203,66 @@ export class Scenes {
       const e = Easing.out(Easing.cubic)(clamp01(t / (o.sec ?? 0.5)));
       return this.piece(id, { opacity: e * max * fade, dy: (1 - e) * o.riseUnits, pose: o.pose });
     }
+    if (kind === 'pop') {   // scale up from `from` with a small overshoot, fading in over the first part
+      const x = clamp01(t / (o.sec ?? 0.4)) - 1, e = 1 + 2.70158 * x * x * x + 1.70158 * x * x, from = o.from ?? 0.6;
+      return this.piece(id, { opacity: clamp01(t / ((o.sec ?? 0.4) * 0.4)) * max * fade, scale: from + (1 - from) * e, pose: o.pose });
+    }
     return this.piece(id, { ...base, opacity: (base.opacity ?? 1) * fade, pose: o.pose });
   }
-  /** Characters revealed left to right by clipping the captured text at real glyph edges; a caret follows and blinks on a fixed clock. */
+  /**
+   * Characters revealed in reading order by clipping the captured text at real glyph edges, line by line
+   * (earlier lines whole, the current one up to the caret); a caret follows and blinks on a fixed clock.
+   */
   typed(id, t, o = {}) {
-    const s = this.still(id), cx = s.cx ?? [], n = cx.length;
+    const s = this.still(id), cx = s.cx ?? [], n = cx.length, lines = s.lines ?? [], ln = s.ln ?? [], multi = lines.length > 1;
     const cps = o.cps ?? this.style.caption.typeCps;
     const shown = Math.min(n, Math.floor(t * cps));
     const done = shown >= n;
-    const x0 = s.x + (o.dx ?? 0), y0 = s.y + (o.dy ?? 0);
+    const x0 = s.x + (o.dx ?? 0), y0 = s.y + (o.dy ?? 0), op = (o.max ?? 1) * (o.fade ?? 1);
+    const L = shown > 0 ? (ln[shown - 1] ?? 0) : 0;
     const edge = shown <= 0 ? (s.cl ?? 0) : cx[shown - 1];
-    if (shown > 0 || o.caret !== false) this.piece(id, { opacity: (o.max ?? 1) * (o.fade ?? 1), clipX: x0 + edge + 0.5, dx: o.dx, dy: o.dy, pose: o.pose });
+    if (shown > 0 || o.caret !== false) {
+      const common = { opacity: op, dx: o.dx, dy: o.dy, pose: o.pose };
+      if (!multi) this.piece(id, { ...common, clip: { x: edge + 0.5 } });
+      else {
+        const yTop = L === 0 ? -1e6 : (lines[L - 1].b + lines[L].t) / 2, yBot = L === lines.length - 1 ? 1e6 : (lines[L].b + lines[L + 1].t) / 2;
+        if (L > 0) this.piece(id, { ...common, clip: { y0: -1e6, y1: yTop } });
+        this.piece(id, { ...common, clip: { x: edge + 0.5, y0: yTop, y1: yBot } });
+      }
+    }
     const caret = o.caret ?? this.style.caption.caret;
     if (caret && caret !== 'none' && cx.length) {
       // blink: steady while typing, then on/off every 0.5 s counted from the last character
       const since = t - n / cps, on = !done || Math.floor(Math.max(0, since) * 2) % 2 === 0;
       if (on) {
-        const u = this.u, ch = (s.cy1 ?? 0) - (s.cy0 ?? 0) || 28 * u, w = caret === 'block' ? Math.max(8 * u, (cx[Math.min(shown, n - 1)] ?? edge) - (shown > 0 ? cx[shown - 1] : (s.cl ?? 0)) || 12 * u) : Math.max(2, 2.2 * u);
+        const u = this.u, top = multi ? lines[L].t : (s.cy0 ?? 0), bot = multi ? lines[L].b : (s.cy1 ?? 0);
+        const ch = bot - top || 28 * u, w = caret === 'block' ? Math.max(8 * u, (cx[Math.min(shown, n - 1)] ?? edge) - (shown > 0 ? cx[shown - 1] : (s.cl ?? 0)) || 12 * u) : Math.max(2, 2.2 * u);
         const color = this.rgb(o.caretColor ?? this.style.caption.caretColor ?? this.style.palette.accent);
-        this.gl.solid({ x: x0 + edge + (caret === 'bar' ? 1 : 0), y: y0 + (s.cy0 ?? 0), w, h: ch }, color, (o.max ?? 1) * (o.fade ?? 1) * (caret === 'block' ? 0.55 : 1));
+        this.gl.solid({ x: x0 + edge + (caret === 'bar' ? 1 : 0), y: y0 + top, w, h: ch }, color, op * (caret === 'block' ? 0.55 : 1));
       }
     }
+  }
+  /**
+   * The extra pieces a builder returned for `owner` ("s<scene index>" for a title, card, list or split; a caption's
+   * picture name for a caption), each starting `at` seconds after the owner's own clock `t`, with its own entrance.
+   */
+  extras(owner, t, o = {}) {
+    const ids = this.extraIds.get(owner);
+    if (!ids) return;
+    const u = this.u, prev = this.poseT;
+    for (const id of ids) {
+      const m = this.R.stills.get(id).meta, tt = t - (m.at ?? 0);
+      if (tt < 0) continue;
+      let fade = o.fade ?? 1;
+      if (m.until !== undefined) fade *= 1 - clamp01((t - m.until) / Math.max(0.001, m.exitSec ?? 0.25));
+      const max = (m.opacity ?? 1) * fade;
+      if (max <= 0.001) continue;
+      this.poseT = tt;
+      const kind = m.enter ?? 'fade', sec = m.sec ?? 0.35, e = clamp01(tt / sec);
+      const pose = this.R.stills.get(id).poses > 1 ? this.poseIndex(this.R.stills.get(id), tt, m) : undefined;
+      this.appear(id, kind, tt, { opacity: e * max }, { max, sec, from: m.from, px: m.px, cps: m.cps ?? 30, caret: m.caret ?? 'none', riseUnits: (m.rise ?? 14) * u, pose });
+    }
+    this.poseT = prev;
   }
 
   // ---------------------------------------------------------------- captions
@@ -208,9 +278,12 @@ export class Scenes {
       if (op > 0.001) this.glass({ x: s.bx, y: s.by + dy, w: s.bw, h: s.bh }, K.glass, op);
     }
     const kind = K.enter;
-    const t = (lf - delay) / this.fps;
+    const t = (lf - delay) / this.fps, prevT = this.poseT;
+    this.poseT = Math.max(0, t);   // a caption's pose sequence runs from its own start
     if (kind === 'fade') this.piece(id, { opacity: enter * exit, dy: (1 - enter) * size * K.rise });
     else this.appear(id, kind, t, { opacity: enter * exit, dy: (1 - enter) * size * K.rise }, { fade: exit, riseUnits: size * Math.max(K.rise, 1.6), sec: 0.5 });
+    this.extras(id, t, { fade: exit });
+    this.poseT = prevT;
   }
   captions(scene, local) {
     const total = Math.round(scene.durationSec * this.fps), pos = captionPos(this.spec, this.style, scene), ql = this.ql;
@@ -298,10 +371,22 @@ export class Scenes {
     const tag = shellTag(style, scene);
     if (!full) gl.quad(this.still(ID.shell(lay.outer, radiusOf(style, W), true, tag)).tex, this.rectOf(ID.shell(lay.outer, radiusOf(style, W), true, tag)));
     gl.window(tex, win, botR, origin, [pp, pp], 1, { topR, prev });
+    this.scrim(scene, lay);
     if (!full && (style.window.border || style.window.highlight)) { const rid = ID.ring(lay.outer, radiusOf(style, W)); gl.quad(this.still(rid).tex, this.rectOf(rid)); }
     this.callouts(scene, local, view, win, botR, topR, cam);
     this.groupXf = xf ? (prevXf ? mul(prevXf, xf) : xf) : null;   // captions placed in the shell's own slot ride with it
     gl.setXf(prevXf);
+  }
+  /** The soft gradient behind overlay captions (caption.scrim), fading in with the first caption and out with the last. */
+  scrim(scene, lay) {
+    const K = this.style.caption.scrim, C = this.style.caption;
+    if (!K || !(scene.caption || scene.captions?.length)) return;
+    const v = lay.view, hh = Math.round(v.h * (K.height ?? 0.3)), radius = lay.full || lay.ins.b > 0 ? 0 : radiusOf(this.style, this.W);
+    const id = ID.scrim(v, hh, radius, `${K.color ?? '#000'}|${K.opacity ?? 0.6}`);
+    if (!this.has(id)) return;
+    const total = Math.round(scene.durationSec * this.fps), from = Math.round((scene.captions?.length ? Math.min(...scene.captions.map((c) => c.atSec)) : 0) * this.fps);
+    const o = clamp01((this.ql - from) / (0.35 * this.fps)) * interpolate(this.ql, [total - Math.round(C.exit * this.fps), total], [1, 0]);
+    if (o > 0.001) this.gl.quad(this.still(id).tex, this.rectOf(id), { opacity: o });
   }
   rectOf(id) { const s = this.still(id); return { x: s.x, y: s.y, w: s.w, h: s.h }; }
 
@@ -318,7 +403,7 @@ export class Scenes {
   callouts(scene, local, box, win, winR, topR, cam) {
     const { gl, fps, u, style } = this, K = style.callout, accent = style.palette.accent, ql = this.ql;
     const ring = this.rgb(K.ringColor ?? accent), dim = this.rgb(K.dimColor), hasMark = style.builders?.includes('calloutMark');
-    for (const c of scene.callouts ?? []) {
+    for (const [ci, c] of (scene.callouts ?? []).entries()) {
       if (!c.box || c.atSec === undefined) continue;
       const from = Math.round(c.atSec * fps), to = from + Math.round((c.forSec ?? K.forSec) * fps);
       if (local < from - 1 || local > to + 1) continue;
@@ -345,7 +430,7 @@ export class Scenes {
         }
       }
       if (c.label) {
-        const s = this.still(ID.chip(c.label, accent)), below = y < 0.18;
+        const below = y < 0.18, s = this.still(ID.chip(c.label, accent, chipKey(style, this.index, ci, below ? 'below' : 'above')));
         const cw = s.bw, ch = s.bh;
         const cy = (below ? top + bhgt + 10 * u : top - 10 * u - ch) + (1 - enter) * 6 * u * (below ? -1 : 1);
         gl.quad(s.tex, { x: left - (s.bx - s.x), y: cy - (s.by - s.y), w: s.w, h: s.h }, { opacity: o });
@@ -376,6 +461,7 @@ export class Scenes {
   split(scene, local, frames) {
     const { gl, W, H, fps, style } = this, boxes = splitBoxes(style, W, H, scene.aspect), ql = this.ql, R = radiusOf(style, W), M = style.motion.split;
     if (!this.shared) this.background();
+    this.furniture(this.index);
     const labels = [scene.before.label ?? 'Before', scene.after.label ?? 'After'];
     [0, 1].forEach((i) => {
       const enter = spring({ frame: ql - i * M.stagger, fps, config: this.SPRING });
@@ -389,10 +475,12 @@ export class Scenes {
       });
     });
     this.captions(scene, local);
+    this.extras(`s${this.index}`, ql / fps);
   }
   issue(scene, local) {
     const { fps, u, style } = this, i = this.index, ql = this.ql, M = style.motion.card, kind = style.card.rowEnter;
     if (!this.shared) this.background();
+    this.furniture(i);
     const s = (delay) => spring({ frame: ql - Math.round(delay * fps), fps, config: this.SPRING });
     const s0 = s(0);
     this.group(s0, 0, (1 - s0) * M.rise * u, () => {
@@ -405,48 +493,85 @@ export class Scenes {
       if (has(scene.title)) rise('title', 0);
       if (has(scene.quote)) rise('quote', 1);
       if (has(scene.reporter)) rise('reporter', 2);
+      this.extras(`s${i}`, ql / fps);
     });
   }
   list(scene, local) {
     const { fps, u, style } = this, i = this.index, ql = this.ql, M = style.motion.list, kind = style.list.itemEnter;
     if (!this.shared) this.background();
+    this.furniture(i);
     const at = (delay) => spring({ frame: ql - Math.round(delay * fps), fps, config: this.SPRING });
     const h = at(0);
     if (has(scene.title) || has(scene.subtitle)) this.piece(ID.piece(i, 'head'), { opacity: h, dy: (1 - h) * M.headRise * u });
     (scene.items ?? []).forEach((_, k) => {
       const d = M.start + k * M.step, v = at(d);
-      if (kind === 'slide') this.piece(ID.piece(i, `i${k}`), { opacity: v, dx: (1 - v) * M.dx * u });
+      if (kind === 'slide') this.piece(ID.piece(i, `i${k}`), { opacity: v, dx: (1 - v) * M.dx * u, dy: (1 - v) * (M.dy ?? 0) * u });
       else this.appear(ID.piece(i, `i${k}`), kind, (ql - Math.round(d * fps)) / fps, { opacity: v }, { cps: 45 });
     });
+    this.extras(`s${i}`, ql / fps);
   }
   title(scene, local) {
-    const { fps, W, style } = this, i = this.index, effect = scene.effect ?? 'soft-blur-in', ql = this.ql, T = style.motion.text;
+    const { fps, style } = this, i = this.index, effect = effectOf(style, scene), q0 = this.ql, T = style.motion.text, tk = style.title;
     if (!this.shared) this.background();
-    const speed = 30 / fps;
+    this.furniture(i);
+    const speed = 30 / fps, num = (v) => v !== undefined && v !== null;
+    const chars = has(scene.text) ? emChars(scene.text) : [];
+    const SB = T.softBlur, MS = T.microScale, P = T.wordPush;
+    // timing in seconds when the style gives it (staggerSec, sec, riseSec ...), else the original frame counts
+    const sbStag = num(SB.staggerSec) ? SB.staggerSec * fps : SB.stagger, sbFrames = num(SB.sec) ? SB.sec * fps : SB.frames, sbRise = num(SB.riseSec) ? SB.riseSec * fps : SB.riseFrames;
+    const msFrames = num(MS.sec) ? MS.sec * 30 : MS.frames;
+    const pw = (k) => (num(P.gapSec) ? P.gapSec * 30 : P.gap);
+    const lines = effect === 'lines' && has(scene.text) ? this.still(ID.piece(i, 'all')).lines ?? [{ t: 0, b: 1 }] : null, LM = tk.lines ?? {};
+    const lSec = LM.sec ?? 0.6, lStag = LM.stagger ?? 0.09;
+    const typeCps = tk.typeCps ?? 24;
+    // how long the whole entrance takes, so title.maxEnterSec can speed it up until it finishes in time
+    let total = 0;
+    if (has(scene.text)) {
+      if (effect === 'word-push') { const nw = emWords(scene.text).length, accel = P.accel, rf = (n) => (pw() * (1 - accel ** n)) / (1 - accel); total = (rf(nw - 1) + 1 + (num(P.slideSec) ? P.slideSec * 30 : P.slide)) / 30; }
+      else if (effect === 'micro-scale-fade') total = msFrames / 30;
+      else if (effect === 'type') total = chars.length / typeCps;
+      else if (effect === 'lines') total = (lines.length - 1) * lStag + lSec;
+      else total = ((chars.length - 1) * sbStag + sbFrames) / fps;
+    }
+    const cap = tk.maxEnterSec, comp = num(cap) && cap > 0 && total > cap ? total / cap : 1;
+    const ql = q0 * comp;
     if (!has(scene.text)) { /* nothing to reveal */ }
     else if (effect === 'word-push') this.wordPush(scene, i, ql * speed);
     else if (effect === 'micro-scale-fade') {
-      const M = T.microScale, e = bezier(...M.ease), f = ql * speed;
-      this.piece(ID.piece(i, 'all'), { opacity: interpolate(f, [0, M.frames], [0, 1], { easing: e }), scale: interpolate(f, [0, M.frames], [M.from, 1], { easing: e }) });
+      const e = bezier(...MS.ease), f = ql * speed;
+      this.piece(ID.piece(i, 'all'), { opacity: interpolate(f, [0, msFrames], [0, 1], { easing: e }), scale: interpolate(f, [0, msFrames], [MS.from, 1], { easing: e }) });
+    } else if (effect === 'type') {
+      this.typed(ID.piece(i, 'all'), ql / fps, { cps: typeCps, caret: tk.caret ?? 'bar', caretColor: tk.caretColor ?? undefined });
+    } else if (effect === 'lines') {
+      // one picture, drawn once per line inside that line's own band: the band stays put and the line rises into it from below
+      const id = ID.piece(i, 'all'), ease = bezier(...(LM.ease ?? [0.22, 1, 0.36, 1])), t = ql / fps;
+      lines.forEach((ln, k) => {
+        const e = ease(clamp01((t - k * lStag) / lSec));
+        if (e <= 0) return;
+        const unit = (ln.b - ln.t) * 1.3, y0 = k === 0 ? -1e6 : (lines[k - 1].b + ln.t) / 2, y1 = k === lines.length - 1 ? ln.b + (ln.b - ln.t) * 0.25 : (ln.b + lines[k + 1].t) / 2;
+        this.piece(id, { opacity: LM.fade === false ? 1 : clamp01(e * 2), dy: (1 - e) * (LM.rise ?? 1) * unit, clip: { y0, y1, mask: true } });
+      });
     } else {
       // soft-blur-in gets no speed correction in the template: its counts run in output frames
-      const M = T.softBlur, e = bezier(...M.ease);
-      emChars(scene.text).forEach(({ c }, k) => {
+      const e = bezier(...SB.ease);
+      chars.forEach(({ c }, k) => {
         if (!c.trim()) return;
-        const l = ql - k * M.stagger;
-        const blur = interpolate(l, [0, M.frames], [M.blur, 0], { easing: e });
-        this.piece(ID.piece(i, `c${k}`), { opacity: interpolate(l, [0, M.frames], [0, 1], { easing: e }), dy: interpolate(l, [0, M.riseFrames], [M.rise, 0], { easing: e }), sigma: blur });
+        const l = ql - k * sbStag;
+        const blur = interpolate(l, [0, sbFrames], [SB.blur, 0], { easing: e });
+        this.piece(ID.piece(i, `c${k}`), { opacity: interpolate(l, [0, sbFrames], [0, 1], { easing: e }), dy: interpolate(l, [0, sbRise], [SB.rise, 0], { easing: e }), sigma: blur });
       });
     }
     if (has(scene.subtitle)) {
-      const S = T.subtitle, sub = interpolate(ql, [S.from * fps, S.to * fps], [0, 1]), op = style.title.subtitleOpacity;
-      this.appear(ID.piece(i, 'sub'), style.title.subtitleEnter, (ql - S.from * fps) / fps, { opacity: sub * op, dy: (1 - sub) * S.rise }, { max: op, sec: S.to - S.from });
+      const S = T.subtitle, sub = interpolate(q0, [S.from * fps, S.to * fps], [0, 1]), op = style.title.subtitleOpacity;
+      this.appear(ID.piece(i, 'sub'), style.title.subtitleEnter, (q0 - S.from * fps) / fps, { opacity: sub * op, dy: (1 - sub) * S.rise }, { max: op, sec: S.to - S.from });
     }
+    this.extras(`s${i}`, q0 / fps);
   }
   wordPush(scene, i, f) {
     const { style } = this, words = emWords(scene.text).map((w) => w.w);
     const size = this.W * style.title.size, P = style.motion.text.wordPush;
-    const REVEAL = P.reveal, SLIDE = P.slide, OVER = P.over, CHAR = P.char, SPACE = P.space, wordGap = P.gap, accel = P.accel;
+    const n30 = (sec, frames) => (sec !== undefined && sec !== null ? sec * 30 : frames);   // seconds tokens, else frames at 30 fps
+    const REVEAL = n30(P.revealSec, P.reveal), SLIDE = n30(P.slideSec, P.slide), OVER = P.over, CHAR = P.char, SPACE = P.space, wordGap = n30(P.gapSec, P.gap), accel = P.accel;
     const revealFrame = (n) => (wordGap * (1 - accel ** n)) / (1 - accel);
     const push = Easing.out(Easing.cubic), drive = bezier(0.15, 0.7, 0.25, 1);
     const measured = style.title.measure === 'glyph';
@@ -469,6 +594,7 @@ export class Scenes {
     const scene = this.spec.scenes[i];
     this.index = i;
     this.ql = this.q(local); this.pose = this.clock ? Math.floor(local / this.step) : 0;
+    this.poseT = this.ql / this.fps;   // the clock pose sequences play on (a caption sets its own)
     switch (scene.type) {
       case 'title': return this.title(scene, local);
       case 'issue': return this.issue(scene, local);
@@ -560,6 +686,7 @@ export class Scenes {
     gl.use(prog, gl.full());
     gl.bind(A.tex, 0); gl.bind(B.tex, 1); g.uniform1i(prog.u.uFrom, 0); g.uniform1i(prog.u.uTo, 1);
     g.uniform1f(prog.u.uProgress, this.stepP(b.enter ?? 0, gap));
+    g.uniform2f(prog.u.uDir, ...dirVec(gap.direction));
     const pal = [style.canvas.matte, style.palette.foreground, style.palette.accent, style.callout.dimColor].flatMap((c) => this.rgb(c));
     g.uniform3fv(prog.u.uPal, pal);
     gl.fill();
@@ -590,7 +717,8 @@ export class Scenes {
     if (main) {
       const p = style.post;
       gl.target(null);
-      gl.post(main.tex, n, { dither: p.dither, grain: p.grain, grainSize: p.grainSize * this.u, vignette: p.vignette, vignetteSoftness: p.vignetteSoftness });
+      const gf = p.grainClock === 'static' ? 0 : p.grainClock === 'pose' ? Math.floor(n / this.step) : n;   // grain on the output frames (default), on the style's clock poses, or never moving
+      gl.post(main.tex, n, { grainFrame: gf, dither: p.dither, grain: p.grain, grainSize: p.grainSize * this.u, vignette: p.vignette, vignetteSoftness: p.vignetteSoftness });
       this.cur = null;
     }
   }
@@ -600,11 +728,11 @@ export class Scenes {
     const { fps, W, H } = this, k = W / 1920, h = (logo.height ?? 34) * k, pad = 44 * k;
     const opacity = (logo.opacity ?? 0.9) * interpolate(n, [0.3 * fps, 0.9 * fps], [0, 1]);
     if (opacity <= 0.001) return;
-    const s = this.still(ID.logo(logo.src, h));
+    const s = this.still(ID.logo(logo.src, h, this.style));
     const corner = logo.corner ?? 'bottom-right';
-    const w = s.bw;
+    const w = s.bw, hh = this.style.logo?.plate ? s.bh : h;   // a plate makes the picture taller than the logo
     const x = corner.endsWith('right') ? W - pad - w : pad;
-    const y = corner.startsWith('bottom') ? H - pad * (H / W) * 1.6 - h : pad * (H / W) * 1.6;
+    const y = corner.startsWith('bottom') ? H - pad * (H / W) * 1.6 - hh : pad * (H / W) * 1.6;
     this.gl.quad(s.tex, { x: x - (s.bx - s.x), y: y - (s.by - s.y), w: s.w, h: s.h }, { opacity });
   }
 }

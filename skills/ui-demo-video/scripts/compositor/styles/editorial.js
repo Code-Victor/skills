@@ -242,7 +242,7 @@ vec4 transition(vec2 uv){
 
   build: {
     // ---------------------------------------------------------------- the running header
-    furniture: (c) => ({ html: header(c, 0, 0) }),
+    furniture: (c) => (c.sceneType === 'clip' || c.sceneType === 'image' ? { html: header(c, 0, 0) } : null),   // engine edit: furniture is now offered on every scene type; the card, list and title builders carry their own copy
 
     // ---------------------------------------------------------------- title
     title: (c) => {
