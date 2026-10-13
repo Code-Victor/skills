@@ -34,7 +34,8 @@ import { NATURAL_SEC, TRANSITIONS, resolveGap, sceneSpans, totalFrames } from '.
 
 const T0 = Date.now();
 const here = path.dirname(fileURLToPath(import.meta.url));
-const HOME_CACHE = path.join(os.homedir(), '.cache', 'ui-demo-video');
+const HOME_CACHE = path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), '.cache'), 'ui-demo-video');
+const SOFT_GL = !!process.env.COMPOSE_SOFTGL;
 
 // ------------------------------------------------------------ arguments
 const argv = process.argv.slice(2);
@@ -97,16 +98,26 @@ const findChrome = () => {
     '/usr/bin/chromium',
     '/usr/bin/chromium-browser',
   ];
-  return candidates.find((c) => c && fs.existsSync(c));
+  const fixed = candidates.find((c) => c && fs.existsSync(c));
+  if (fixed) return fixed;
+  // Same discovery as chrome.sh: then look on PATH.
+  for (const name of ['google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser']) {
+    const r = spawnSync('which', [name], { encoding: 'utf8' });
+    if (r.status === 0 && r.stdout.trim()) return r.stdout.trim();
+  }
+  return undefined;
 };
 const run = (cmd, args, opts = {}) => {
-  const r = spawnSync(cmd, args, { encoding: 'utf8', maxBuffer: 1 << 28, ...opts });
+  const r = spawnSync(cmd, args, { encoding: 'utf8', maxBuffer: 1 << 28, timeout: 15 * 60_000, ...opts });
+  if (r.error?.code === 'ETIMEDOUT') fail(`${cmd} took longer than 15 minutes; giving up`);
   if (r.error) fail(`${cmd} could not start: ${r.error.message}`);
   if (r.status !== 0) fail(`${cmd} failed: ${(r.stderr || '').trim().split('\n').slice(-4).join(' | ')}`);
   return r.stdout;
 };
 const runAsync = (cmd, args) => new Promise((resolve, reject) => {
   const p = spawn(cmd, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+  const timer = setTimeout(() => { try { p.kill('SIGKILL'); } catch {} }, 15 * 60_000);
+  p.on('close', () => clearTimeout(timer));
   let err = '';
   p.stderr.on('data', (d) => (err += d));
   p.on('error', reject);
@@ -126,12 +137,19 @@ spec.transition ??= 'zoom-blur'; spec.transitionSec ??= 0.45;
 if (!Array.isArray(spec.scenes) || !spec.scenes.length) fail('video.json has no scenes');
 const KNOWN = ['clip', 'image', 'split', 'title', 'issue', 'list'];
 spec.scenes.forEach((s, i) => { if (!KNOWN.includes(s.type)) fail(`scene ${i}: unknown scene type "${s.type}" (expected one of ${KNOWN.join(', ')})`); });
+// Optional text that is absent or empty draws nothing: drop empty list items and empty timed captions up front.
+const filled = (v) => v !== undefined && v !== null && String(v) !== '';
+for (const sc of spec.scenes) {
+  if (sc.type === 'list') sc.items = (sc.items ?? []).filter(filled);
+  if (sc.type === 'clip' && sc.captions) sc.captions = sc.captions.filter((c) => filled(c?.text));
+}
 const checkTransition = (t, where) => { const type = typeof t === 'string' ? t : t?.type; if (!TRANSITIONS.includes(type)) fail(`${where}: unknown transition "${type}" (expected one of ${TRANSITIONS.join(', ')})`); };
 checkTransition(spec.transition, 'transition');
 (spec.transitions ?? []).forEach((t, i) => t && checkTransition(t, `transitions[${i}]`));
 
 const W = spec.width, H = spec.height, FPS = spec.fps;
 const N = totalFrames(spec, FPS);
+if (!(N > 0)) fail('the scenes add up to zero frames (check durationSec on every scene)');
 const DURATION = N / FPS;
 const spans = sceneSpans(spec, FPS);
 spec.scenes.forEach((s, i) => {
@@ -228,9 +246,11 @@ const probeClip = (file) => {
 };
 
 
+const usedProxies = new Set(), proxyDirs = new Set();
 const proxyFor = async (file, info) => {
   const dir = path.join(path.dirname(path.resolve(flags.out ?? flags['still-out'] ?? '.')), '.compose-cache');
   fs.mkdirSync(dir, { recursive: true });
+  proxyDirs.add(dir);
   const st = fs.statSync(file);
   const out = path.join(dir, `${path.basename(file).replace(/\.[^.]+$/, '')}-${st.size}-${Math.round(st.mtimeMs)}-proxy.mp4`);
   if (!fs.existsSync(out)) {
@@ -241,6 +261,7 @@ const proxyFor = async (file, info) => {
       '-r', String(FPS), '-fps_mode', 'cfr', '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-movflags', '+faststart', tmp]);
     fs.renameSync(tmp, out);
   }
+  usedProxies.add(out);
   return out;
 };
 
@@ -346,7 +367,7 @@ const server = http.createServer(async (req, res) => {
     const body = Buffer.concat(chunks);
     if (u.pathname === '/chunks') {
       h264 ??= fs.createWriteStream(h264Path);
-      if (+req.headers['x-seq'] !== chunkSeq) seqErrors++;
+      if (+req.headers['x-seq'] !== chunkSeq) { seqErrors++; rejectDone(new Failed(`encoded chunk ${req.headers['x-seq']} arrived where ${chunkSeq} was expected`)); }
       chunkSeq = +req.headers['x-seq'] + 1; chunkBytes += body.length;
       h264.write(body);
     } else if (u.pathname === '/chunks-end') { if (h264) await new Promise((r) => h264.end(r)); }
@@ -386,12 +407,17 @@ const chrome = spawn(CHROME, [
   '--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`,
   '--no-first-run', '--no-default-browser-check', '--mute-audio', '--hide-scrollbars', '--force-device-scale-factor=1',
   '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows',
-  '--disable-features=Translate,MediaRouter', `--window-size=${W},${H}`, 'about:blank',
+  '--disable-features=Translate,MediaRouter', `--window-size=${W},${H}`,
+  ...(SOFT_GL ? ['--use-angle=swiftshader', '--use-gl=angle', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] : []), 'about:blank',
 ], { stdio: ['ignore', 'ignore', 'pipe'] });
 let chromeErr = '';
 chrome.stderr.on('data', (d) => { chromeErr = (chromeErr + d).slice(-4000); });
-let chromeExited = false;
-chrome.on('exit', () => { chromeExited = true; rejectDone(new Failed('Chrome exited unexpectedly ' + chromeErr.trim().split('\n').slice(-2).join(' | '))); });
+let chromeExited = false, closing = false;
+// If Chrome dies at any point the run fails at once; nothing waits on a dead browser.
+chrome.on('exit', (code, sig) => {
+  chromeExited = true;
+  if (!closing) bail(new Failed(`Chrome exited unexpectedly (${sig ?? 'code ' + code})${chromeErr.trim() ? ': ' + chromeErr.trim().split('\n').slice(-2).join(' | ') : ''}`));
+});
 cleanups.push(() => { if (!chromeExited) { try { chrome.kill('SIGKILL'); } catch {} } });
 
 const wsUrl = await (async () => {
@@ -405,10 +431,16 @@ const wsUrl = await (async () => {
 })();
 
 // A small DevTools client: one browser connection, pages as flat sessions.
-const ws = new WebSocket(wsUrl);
-await new Promise((res, rej) => { ws.onopen = res; ws.onerror = () => rej(new Failed('could not connect to Chrome')); });
 let msgId = 0;
 const pendingCalls = new Map();
+const ws = new WebSocket(wsUrl);
+await new Promise((res, rej) => { ws.onopen = res; ws.onerror = () => rej(new Failed('could not connect to Chrome')); setTimeout(() => rej(new Failed('Chrome did not accept the debugging connection within 15 s')), 15000); });
+ws.onclose = () => {
+  for (const { rej } of pendingCalls.values()) rej(new Failed('Chrome closed the debugging connection'));
+  pendingCalls.clear();
+  if (!closing) bail(new Failed('Chrome closed the debugging connection'));
+};
+
 const pageLogs = [];
 ws.onmessage = (m) => {
   const d = JSON.parse(m.data);
@@ -416,9 +448,10 @@ ws.onmessage = (m) => {
   else if (d.method === 'Runtime.exceptionThrown') { const t = d.params.exceptionDetails; pageLogs.push(t.exception?.description || t.text); note('[page exception]', (t.exception?.description || t.text || '').slice(0, 500)); }
   else if (d.method === 'Runtime.consoleAPICalled' && flags.verbose) note('[console]', d.params.args.map((a) => a.value ?? a.description).join(' '));
 };
-const send = (method, params = {}, sessionId) => new Promise((res, rej) => {
+const send = (method, params = {}, sessionId, timeoutMs = 60_000) => new Promise((res, rej) => {
   const id = ++msgId;
-  pendingCalls.set(id, { res, rej });
+  const timer = setTimeout(() => { pendingCalls.delete(id); rej(new Failed(`Chrome did not answer ${method} within ${timeoutMs / 1000} s`)); }, timeoutMs);
+  pendingCalls.set(id, { res: (v) => { clearTimeout(timer); res(v); }, rej: (e) => { clearTimeout(timer); rej(e); } });
   ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
 });
 const openPage = async (url) => {
@@ -514,6 +547,16 @@ for (;;) {
   result = await done;
   clearInterval(watchdog);
   if (result.ok) break;
+  // No WebGL2 or no H.264 encoder: try once with Chrome's software GL, then give up with a pointer to Remotion.
+  if (/WebGL2|cannot encode H\.264/i.test(result.fatal)) {
+    if (!SOFT_GL) {
+      note(`warning: ${result.fatal}; retrying with Chrome's software GL`);
+      cleanupSync();
+      const r = spawnSync(process.execPath, process.argv.slice(1), { stdio: 'inherit', env: { ...process.env, COMPOSE_SOFTGL: '1' } });
+      process.exit(r.status ?? 1);
+    }
+    fail(`this Chrome cannot run the GPU renderer (${/WebGL2/i.test(result.fatal) ? 'WebGL2 is missing even with software GL' : 'H.264 encoding is missing'}); use the Remotion renderer instead (scripts/new-remotion.sh, see references/remotion-remocn.md)`);
+  }
   // A recording the decoder cannot read: transcode it to a clean proxy and try once more.
   const bad = [...clips.keys()].find((src) => result.fatal.includes(` ${src}`) && /decode|decoder/i.test(result.fatal));
   if (!bad || attempt++ > 0 || clips.get(bad).info.proxyOf) fail(`render failed in the page: ${result.fatal}${flags.verbose && result.stack ? '\n' + result.stack : ''}`);
@@ -539,6 +582,8 @@ if (!stillMode) {
   outPath = path.resolve(flags.out);
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
   const tMux = Date.now();
+  const partPath = `${outPath}.part-${process.pid}.mp4`;
+  cleanups.push(() => fs.rmSync(partPath, { force: true }));
   const inputs = ['-r', String(FPS), '-f', 'h264', '-i', h264Path];
   const filter = [];
   const audioLabels = [];
@@ -570,10 +615,9 @@ if (!stillMode) {
   const args = ['-y', '-v', 'error', ...inputs];
   if (filter.length) args.push('-filter_complex', filter.join(';'), '-map', '0:v', '-map', '[aout]', '-c:a', 'aac', '-b:a', '192k', '-ar', '48000');
   args.push('-c:v', 'copy', '-bsf:v', 'h264_metadata=video_full_range_flag=0:colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1',
-    '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-color_range', 'tv', '-t', DURATION.toFixed(4), '-movflags', '+faststart', outPath);
-  run('ffmpeg', args);
+    '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-color_range', 'tv', '-t', DURATION.toFixed(4), '-movflags', '+faststart', '-f', 'mp4', partPath);
+  try { run('ffmpeg', args); fs.renameSync(partPath, outPath); } catch (e) { fs.rmSync(partPath, { force: true }); throw e; }
   muxMs = Date.now() - tMux;
-  if (seqErrors) warn('encoded chunks arrived out of order');
 }
 
 // ------------------------------------------------------------ still from a finished video, and the sheet
@@ -603,7 +647,16 @@ if (flags.sheet && !stillMode) {
 }
 
 // ------------------------------------------------------------ shut down, report
-await send('Browser.close').catch(() => {});
+// Housekeeping: proxies this run did not use and nobody has touched for a week.
+for (const dir of new Set([...proxyDirs, path.join(path.dirname(path.resolve(flags.out ?? flags['still-out'] ?? '.')), '.compose-cache')])) {
+  if (!fs.existsSync(dir)) continue;
+  for (const f of fs.readdirSync(dir)) {
+    const full = path.join(dir, f);
+    try { if (f.endsWith('proxy.mp4') && !usedProxies.has(full) && Date.now() - fs.statSync(full).mtimeMs > 7 * 86400e3) fs.rmSync(full); } catch {}
+  }
+}
+closing = true;
+await send('Browser.close', {}, undefined, 5000).catch(() => {});
 await new Promise((r) => { if (chromeExited) return r(); chrome.once('exit', r); setTimeout(r, 3000); });
 cleanupSync();
 
