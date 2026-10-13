@@ -8,6 +8,11 @@ import studio from './studio.js';
 import midnight from './midnight.js';
 
 export const STYLES = { studio, midnight };
+// Test hook: UI_DEMO_EXTRA_STYLES=/abs/path/file.js (default export { name: style, ... } or one style) adds styles that are not registered yet.
+if (process.env.UI_DEMO_EXTRA_STYLES) {
+  const extra = (await import(process.env.UI_DEMO_EXTRA_STYLES)).default;
+  if (extra?.name && typeof extra.name === 'string') STYLES[extra.name] = extra; else Object.assign(STYLES, extra);
+}
 export const DEFAULT_STYLE = 'studio';
 export const styleNames = () => Object.keys(STYLES);
 /** [{ name, description, suits }] for --list-styles and the docs. */
@@ -61,7 +66,10 @@ export const resolveStyle = (spec, flagStyle) => {
   const set = (k) => t[k] !== undefined && (isStudio || !same(t[k], DEFAULTS.theme[k]));
   if (set('foreground')) s.palette.foreground = t.foreground;
   if (set('accent')) s.palette.accent = t.accent;
-  if (set('tagColors')) s.palette.tagColors = deepMerge(s.palette.tagColors ?? {}, t.tagColors);
+  if (set('tagColors')) {   // per tag: a colour equal to the authoring default is not the author's choice
+    const own = isStudio ? t.tagColors : Object.fromEntries(Object.entries(t.tagColors).filter(([k, v]) => DEFAULTS.theme.tagColors?.[k] !== v));
+    s.palette.tagColors = deepMerge(s.palette.tagColors ?? {}, own);
+  }
   if (set('background')) { s.palette.background = t.background; s.canvas = { ...s.canvas, background: { kind: 'css' } }; }
   if (s.canvas.background.kind !== 'css' && s.canvas.model === 'scene') s.canvas.model = 'shared';
   if (s.post.dither > 0 || s.post.grain > 0 || s.post.vignette > 0 || s.caption.variant === 'glass') s.needsMain = true;

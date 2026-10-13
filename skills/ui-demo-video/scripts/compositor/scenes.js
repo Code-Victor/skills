@@ -240,7 +240,7 @@ export class Scenes {
     gl.target(cur); gl.setXf(prev);
     const tint = this.rgb(g.tint), ta = (this.style.rgb?.[g.tint]?.[3]) ?? 0.35;
     const rad = g.radius >= 999 ? box.h / 2 : g.radius * u;
-    gl.glass(A2.tex, B2 ? B2.tex : null, box, rad, { opacity, saturate: g.saturate, tint: [tint[0] * ta, tint[1] * ta, tint[2] * ta, ta] });
+    gl.glass(A2, B2, box, rad, { opacity, saturate: g.saturate, tint: [tint[0] * ta, tint[1] * ta, tint[2] * ta, ta] });
   }
 
   // ---------------------------------------------------------------- recordings
