@@ -104,6 +104,8 @@ function checkSpecInner(spec, { pub = '.', files = true, demo = false } = {}) {
   // A demo.json fills these in; a video.json must carry them.
   // For a style other than studio, theme and transitions are the style's unless the author wrote them.
   const styled = (styleName(spec) ?? 'studio') !== 'studio' && STYLES[styleName(spec)];
+  if (styled && isObj(spec.theme) && (spec.theme.background !== undefined || spec.theme.foreground !== undefined))
+    warnings.push(`theme.background / theme.foreground are ignored under style "${styleName(spec)}" (the style owns its ground and text colour); use "style": { "preset": "${styleName(spec)}", "overrides": { "palette": { ... } } }`);
   if (!demo) for (const k of ['width', 'height', 'fps', 'theme', 'transition', 'transitionSec'])
     if (spec[k] === undefined && !(styled && ['theme', 'transition', 'transitionSec'].includes(k))) errors.push(`spec: missing "${k}"`);
 
