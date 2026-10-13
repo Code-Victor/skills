@@ -215,7 +215,13 @@ const stage = async (name, fn) => {
   current = name;
   const t = Date.now();
   say(`> ${name}`);
-  const note = await fn();
+  let note;
+  try {
+    note = await fn();
+  } catch (e) {
+    // Anything unexpected is still a clean failure that names the stage.
+    return fail(name, `unexpected error: ${e?.stack?.split('\n').slice(0, 3).join(' | ') ?? e}`);
+  }
   const s = { name, sec: secs(t), note: note ?? '' };
   stages.push(s);
   say(`  ${name} ${s.sec}s${s.note ? `: ${s.note}` : ''}`);
@@ -297,7 +303,7 @@ await stage('validate', () => {
   const r = checkDemo(demo);
   const extra = [];
   used = takesUsed(demo);
-  const defined = Object.keys(demo.takes ?? {});
+  const defined = Object.keys(demo?.takes && typeof demo.takes === 'object' ? demo.takes : {});
   for (const flagName of ['retake', 'takes']) {
     for (const n of list(opt[flagName])) if (n !== 'all' && !defined.includes(n)) extra.push(`--${flagName} "${n}" is not a take in demo.json (takes: ${defined.join(', ') || 'none'})`);
   }

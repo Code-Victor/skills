@@ -161,11 +161,11 @@ export const takeHash = (take) =>
 // Takes that scenes refer to, in order of first use.
 export const takesUsed = (demo) => {
   const used = [];
-  const add = (n) => n && !used.includes(n) && used.push(n);
-  for (const s of demo.scenes ?? []) {
-    add(s.take);
-    add(s.before?.take);
-    add(s.after?.take);
+  const add = (n) => typeof n === 'string' && n && !used.includes(n) && used.push(n);
+  for (const s of Array.isArray(demo?.scenes) ? demo.scenes : []) {
+    add(s?.take);
+    add(s?.before?.take);
+    add(s?.after?.take);
   }
   return used;
 };
@@ -223,4 +223,4 @@ export const resolveSpec = (demo, aspects = {}) => {
 };
 
 export const isDemo = (spec, file = '') =>
-  /\.demo\.json$|(^|\/)demo\.json$/.test(file) || DEMO_KEYS.some((k) => k in spec) || spec.scenes?.some((s) => s.take || s.before?.take);
+  /\.demo\.json$|(^|\/)demo\.json$/.test(file) || (spec !== null && typeof spec === 'object' && DEMO_KEYS.some((k) => k in spec)) || (Array.isArray(spec?.scenes) && spec.scenes.some((s) => s?.take || s?.before?.take));

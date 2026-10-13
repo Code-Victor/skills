@@ -62,7 +62,18 @@ const media = (path) => {
  *          and authoring keys are allowed
  * Returns { errors, warnings, totalSec, scenes }.
  */
-export function checkSpec(spec, { pub = '.', files = true, demo = false } = {}) {
+const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+const str = (v) => (typeof v === 'string' ? v : '');
+const wrongShape = (e) => ({ errors: [`something in this file has the wrong shape, so it could not be checked (${e.message})`], warnings: [], totalSec: 0, scenes: 0 });
+export function checkSpec(spec, opts = {}) {
+  if (!isObj(spec)) return { errors: ['the file must hold one JSON object (got ' + (spec === null ? 'null' : Array.isArray(spec) ? 'a list' : typeof spec) + ')'], warnings: [], totalSec: 0, scenes: 0 };
+  try {
+    return checkSpecInner(spec, opts);
+  } catch (e) {
+    return wrongShape(e);
+  }
+}
+function checkSpecInner(spec, { pub = '.', files = true, demo = false } = {}) {
   const out = { errors: [], warnings: [] };
   const { errors, warnings } = out;
   const probe = (src) => media(join(pub, src));
@@ -77,12 +88,27 @@ export function checkSpec(spec, { pub = '.', files = true, demo = false } = {}) 
   if (!demo) for (const k of ['width', 'height', 'fps', 'theme', 'transition', 'transitionSec'])
     if (spec[k] === undefined) errors.push(`spec: missing "${k}"`);
 
-  const gap = (i) => {
-    const t = spec.transitions?.[i] ?? spec.transition ?? 'zoom-blur';
+  // Transitions of the wrong shape are reported, then replaced by the default
+  // so the timeline sums below cannot throw.
+  const okTransition = (t, at) => {
     const o = typeof t === 'string' ? { type: t } : t;
-    if (!KNOWN_TRANSITIONS.has(o?.type)) errors.push(`gap after scene ${i}: unknown transition "${o?.type}"`);
-    return gapSec(spec, i);
+    if (!isObj(o) || typeof o.type !== 'string') { errors.push(`${at}: a transition is a name like "fade" or { "type": "fade", "sec": 0.5 }`); return false; }
+    if (!KNOWN_TRANSITIONS.has(o.type)) { errors.push(`${at}: unknown transition "${o.type}"`); return false; }
+    if ('sec' in o && !(typeof o.sec === 'number' && o.sec >= 0)) { errors.push(`${at}: transition sec must be a number of seconds`); return false; }
+    return true;
   };
+  const tspec = { fps: 60, ...spec };
+  if (spec.transition !== undefined && !okTransition(spec.transition, 'transition')) tspec.transition = 'zoom-blur';
+  if (spec.transitionSec !== undefined && !(typeof spec.transitionSec === 'number' && spec.transitionSec >= 0)) {
+    errors.push('transitionSec must be a number of seconds');
+    tspec.transitionSec = 0.5;
+  }
+  if (!(typeof tspec.fps === 'number' && tspec.fps > 0)) { errors.push('fps must be a positive number'); tspec.fps = 60; }
+  tspec.transitions = Array.isArray(spec.transitions)
+    ? spec.transitions.map((t, i) => (t === null || t === undefined || okTransition(t, `gap after scene ${i}`) ? t : null))
+    : undefined;
+  tspec.scenes = spec.scenes.map((s) => (isObj(s) && Number.isFinite(s.durationSec) ? s : { durationSec: 0 }));
+  const gap = (i) => gapSec(tspec, i);
   if (Array.isArray(spec.transitions)) {
     const gaps = spec.scenes.length - 1;
     if (spec.transitions.length > gaps)
@@ -90,7 +116,7 @@ export function checkSpec(spec, { pub = '.', files = true, demo = false } = {}) 
   } else if (spec.transitions !== undefined) errors.push('transitions must be a list');
 
   const readable = (at, text, visibleSec) => {
-    if (!text) return;
+    if (!text || typeof text !== 'string') return;
     const need = Math.max(1.5, text.length / CPS);
     if (visibleSec < need)
       warnings.push(`${at}: "${text.slice(0, 40)}" is on screen ${visibleSec.toFixed(1)}s, needs about ${need.toFixed(1)}s to read`);
@@ -104,7 +130,9 @@ export function checkSpec(spec, { pub = '.', files = true, demo = false } = {}) 
   };
   // `ref` is the object that names the media: the scene, or a split's side.
   const clipFile = (at, ref, sec, rate = 1, aspect) => {
+    if (ref !== undefined && !isObj(ref)) return errors.push(`${at}: must be an object`);
     const { src, take, trimStartSec: trim } = ref ?? {};
+    if ((src !== undefined && typeof src !== 'string') || (take !== undefined && typeof take !== 'string')) return errors.push(`${at}: src and take must be text`);
     if (!src && !(demo && take)) return errors.push(`${at}: needs ${demo ? '"take" (or "src")' : '"src"'}`);
     if (demo && take && src) return errors.push(`${at}: has both take "${take}" and src; use one`);
     if (!src) return;
@@ -118,21 +146,19 @@ export function checkSpec(spec, { pub = '.', files = true, demo = false } = {}) 
       errors.push(`${at}: aspect ${aspect} but the clip is ${m.w}x${m.h} (${(m.w / m.h).toFixed(3)})`);
   };
 
-  let total = 0;
   spec.scenes.forEach((s, i) => {
-    const at = `scene ${i}${s.caption ? ` ("${s.caption.slice(0, 40)}")` : s.text ? ` ("${s.text}")` : s.title ? ` ("${s.title.slice(0, 40)}")` : ''}`;
+    if (!isObj(s)) return errors.push(`scene ${i}: must be an object, got ${s === null ? 'null' : Array.isArray(s) ? 'a list' : typeof s}`);
+    const at = `scene ${i}${s.caption ? ` ("${str(s.caption).slice(0, 40)}")` : s.text ? ` ("${str(s.text)}")` : s.title ? ` ("${str(s.title).slice(0, 40)}")` : ''}`;
     if (!SCENES.has(s.type)) return errors.push(`${at}: unknown scene type "${s.type}"`);
     unknown(s, demo && (s.type === 'clip' || s.type === 'image') ? [...SCENE_KEYS[s.type], 'take'] : SCENE_KEYS[s.type], at, out, demo ? 'errors' : 'warnings');
     if (!(s.durationSec > 0)) return errors.push(`${at}: durationSec must be a positive number of seconds`);
-    total += s.durationSec;
     if (i > 0) {
       const g = gap(i - 1);
-      total -= g;
       const prev = spec.scenes[i - 1];
-      if (g > Math.min(prev.durationSec, s.durationSec) / 2)
+      if (isObj(prev) && g > Math.min(prev.durationSec, s.durationSec) / 2)
         warnings.push(`${at}: its transition (${g.toFixed(2)}s) eats over half a scene`);
     }
-    if (s.voiceover?.src) exists(at, s.voiceover.src, 'voiceover');
+    if (typeof s.voiceover?.src === 'string') exists(at, s.voiceover.src, 'voiceover');
     if (s.type === 'title') {
       if (!s.text) errors.push(`${at}: a title scene needs text`);
       if (s.durationSec < 1.6) warnings.push(`${at}: under 1.6s, the text reveal won't settle`);
@@ -145,8 +171,8 @@ export function checkSpec(spec, { pub = '.', files = true, demo = false } = {}) 
     }
     if (s.type === 'list') {
       if (!s.title) errors.push(`${at}: a list scene needs a title (template/src/types.ts requires it)`);
-      if (!s.items?.length) errors.push(`${at}: a list scene needs items`);
-      const settle = 0.45 + (s.items?.length ?? 0) * 0.16;
+      if (!Array.isArray(s.items) || !s.items.length) errors.push(`${at}: a list scene needs items (a list of text)`);
+      const settle = 0.45 + (Array.isArray(s.items) ? s.items.length : 0) * 0.16;
       if (s.durationSec < settle + 1.5) warnings.push(`${at}: the last item lands at ${settle.toFixed(1)}s; give it ${(settle + 1.5).toFixed(1)}s or more`);
       return;
     }
@@ -162,14 +188,16 @@ export function checkSpec(spec, { pub = '.', files = true, demo = false } = {}) 
     if (files && s.autoCamera && s.movesFrom !== 'auto-camera')
       errors.push(`${at}: has autoCamera but no generated moves; run scripts/auto-camera.mjs on this file`);
     if (typeof s.moves === 'string') errors.push(`${at}: moves must be a list of keyframes`);
-    for (const mv of Array.isArray(s.moves) ? s.moves : []) {
+    for (const mv of Array.isArray(s.moves) ? s.moves.filter(isObj) : []) {
       if (mv.atSec < 0 || mv.atSec > s.durationSec + 0.01)
         errors.push(`${at}: camera key at ${mv.atSec}s is outside the scene (0 to ${s.durationSec}s)`);
       if ((mv.zoom ?? 1) > 2.2) warnings.push(`${at}: zoom ${mv.zoom} will look soft even from a 2x capture`);
       for (const k of ['x', 'y']) if (mv[k] !== undefined && (mv[k] < 0 || mv[k] > 1))
         errors.push(`${at}: camera ${k}=${mv[k]} must be a fraction 0..1`);
     }
-    for (const c of s.callouts ?? []) {
+    if (s.callouts !== undefined && !Array.isArray(s.callouts)) errors.push(`${at}: callouts must be a list`);
+    for (const c of Array.isArray(s.callouts) ? s.callouts : []) {
+      if (!isObj(c)) { errors.push(`${at}: a callout is an object like { "mark": "toast" }`); continue; }
       const name = c.mark ? ` "${c.mark}"` : '';
       // A mark is placed and timed by auto-camera, so before it has run only
       // a callout with neither a mark nor a box is wrong.
@@ -179,7 +207,8 @@ export function checkSpec(spec, { pub = '.', files = true, demo = false } = {}) 
         if (files || !c.mark) errors.push(`${at}: callout${name} has no atSec; give one or run scripts/auto-camera.mjs to resolve its mark`);
       } else if (c.atSec < 0 || c.atSec > s.durationSec) errors.push(`${at}: callout at ${c.atSec}s is outside the scene`);
     }
-    if (s.captions?.length) {
+    if (s.captions !== undefined && !Array.isArray(s.captions)) errors.push(`${at}: captions must be a list of { atSec, text }`);
+    if (Array.isArray(s.captions) && s.captions.length && s.captions.every(isObj)) {
       const cs = [...s.captions].sort((a, b) => a.atSec - b.atSec);
       cs.forEach((c, j) => {
         if (!c.text) errors.push(`${at}: caption ${j} has no text`);
@@ -189,12 +218,13 @@ export function checkSpec(spec, { pub = '.', files = true, demo = false } = {}) 
       });
     } else readable(at, s.caption, s.durationSec - 0.6);
   });
-  if (spec.music?.src) exists('music', spec.music.src);
-  const stages = spec.scenes.filter((s) => s.frame === 'stage').length;
+  if (typeof spec.music?.src === 'string') exists('music', spec.music.src);
+  const stages = spec.scenes.filter((s) => s?.frame === 'stage').length;
   if (stages > 2) warnings.push(`${stages} stage scenes: keep the 3D shot for one or two hero moments`);
-  if (spec.theme?.logo?.src) exists('theme.logo', spec.theme.logo.src);
-  if (total > 90) warnings.push(`total ${total.toFixed(1)}s: most demos land at 45 to 60s, a fix plus a tour under 90; trim a beat`);
-  return { ...out, totalSec: sceneSpans({ fps: 60, ...spec }).totalSec, scenes: spec.scenes.length };
+  if (typeof spec.theme?.logo?.src === 'string') exists('theme.logo', spec.theme.logo.src);
+  const totalSec = sceneSpans(tspec).totalSec;
+  if (totalSec > 90) warnings.push(`total ${totalSec.toFixed(1)}s: most demos land at 45 to 60s, a fix plus a tour under 90; trim a beat`);
+  return { ...out, totalSec, scenes: spec.scenes.length };
 }
 
 // A step is one object with the keys references/steps.md lists. Mistakes here
@@ -225,15 +255,25 @@ const checkSteps = (at, steps, out) => {
  * shape as checkSpec.
  */
 export function checkDemo(demo) {
+  if (!isObj(demo)) return { errors: ['the file must hold one JSON object (got ' + (demo === null ? 'null' : Array.isArray(demo) ? 'a list' : typeof demo) + ')'], warnings: [], totalSec: 0, scenes: 0 };
+  try {
+    return checkDemoInner(demo);
+  } catch (e) {
+    return wrongShape(e);
+  }
+}
+function checkDemoInner(demo) {
   const out = { errors: [], warnings: [] };
-  if (demo.name !== undefined && !SAFE_NAME.test(demo.name)) out.errors.push(`name "${demo.name}" must be letters, digits, dots, dashes or underscores (it names the output files)`);
+  if (demo.name !== undefined && !SAFE_NAME.test(str(demo.name))) out.errors.push(`name "${demo.name}" must be letters, digits, dots, dashes or underscores (it names the output files)`);
   if (demo.url !== undefined) try { new URL(demo.url); } catch { out.errors.push(`url "${demo.url}" is not a full URL like http://localhost:3000`); }
-  unknown(demo.capture, TAKE_KEYS.filter((k) => !['url', 'duration', 'steps', 'setup', 'pageSetup'].includes(k)), 'capture', out);
-  const takes = demo.takes ?? {};
-  if (typeof takes !== 'object' || Array.isArray(takes)) out.errors.push('takes must be an object of name -> take');
-  for (const [name, t] of Object.entries(typeof takes === 'object' ? takes : {})) {
+  if (demo.capture !== undefined && !isObj(demo.capture)) out.errors.push('capture must be an object of options');
+  else unknown(demo.capture, TAKE_KEYS.filter((k) => !['url', 'duration', 'steps', 'setup', 'pageSetup', 'rehearse'].includes(k)), 'capture', out);
+  const takes = isObj(demo.takes) ? demo.takes : {};
+  if (demo.takes !== undefined && !isObj(demo.takes)) out.errors.push('takes must be an object of name -> take');
+  for (const [name, t] of Object.entries(takes)) {
     const at = `take "${name}"`;
     if (!SAFE_NAME.test(name)) out.errors.push(`${at}: use letters, digits, dots, dashes or underscores in take names (they name the clip files)`);
+    if (!isObj(t)) { out.errors.push(`${at}: must be an object with url, duration and steps`); continue; }
     unknown(t, TAKE_KEYS, at, out);
     if (!t.url && !demo.url) out.errors.push(`${at}: no url (give the take one or set "url" at the top of the file)`);
     else try { new URL(t.url ?? '', demo.url); } catch { out.errors.push(`${at}: url "${t.url}" is not a URL`); }
@@ -243,24 +283,25 @@ export function checkDemo(demo) {
     const keep = t.keep ?? demo.capture?.keep;
     if (floating && !keep && /toast|sonner|snackbar|notification/i.test(JSON.stringify(t.steps ?? [])))
       out.warnings.push(`${at}: hideFloating also hides toasts, which these steps look for; add "keep": "<css of the toast container>" or turn hideFloating off`);
-    if (!t.steps?.length) out.warnings.push(`${at}: no steps; it records the page sitting still`);
-    else checkSteps(at, t.steps, out);
+    if (!Array.isArray(t.steps) || !t.steps.length) {
+      if (t.steps !== undefined && !Array.isArray(t.steps)) out.errors.push(`${at}: steps must be a list`);
+      else out.warnings.push(`${at}: no steps; it records the page sitting still`);
+    } else checkSteps(at, t.steps, out);
   }
+  const scenes = Array.isArray(demo.scenes) ? demo.scenes : [];
   const used = takesUsed(demo);
   for (const n of used) if (!(n in takes)) out.errors.push(`takes: "${n}" is used by a scene but not defined (defined: ${Object.keys(takes).join(', ') || 'none'})`);
   for (const n of Object.keys(takes)) if (!used.includes(n)) out.warnings.push(`take "${n}" is defined but no scene uses it (it would be recorded for nothing)`);
-  (demo.scenes ?? []).forEach((s, i) => {
-    if (s.type === 'split') {
+  scenes.forEach((s, i) => {
+    if (isObj(s) && s.type === 'split') {
       for (const side of ['before', 'after'])
         if (!s[side]?.take && !s[side]?.src) out.errors.push(`scene ${i}: split needs ${side}.take (or ${side}.src)`);
     }
   });
-  const spec = checkSpec(demo, { demo: true, files: false });
   // checkSpec on the authored file already flags missing take/src; resolving
   // is only for the timeline total.
-  let totalSec = spec.totalSec;
-  try { totalSec = sceneSpans(resolveSpec(demo)).totalSec; } catch {}
-  return { errors: [...out.errors, ...spec.errors], warnings: [...out.warnings, ...spec.warnings], totalSec, scenes: spec.scenes };
+  const spec = checkSpec(demo, { demo: true, files: false });
+  return { errors: [...out.errors, ...spec.errors], warnings: [...out.warnings, ...spec.warnings], totalSec: spec.totalSec, scenes: spec.scenes };
 }
 
 // ------------------------------------------------------------------- CLI
@@ -282,7 +323,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
     console.error(`error ${file}: ${e.message}`);
     process.exit(1);
   }
-  const demo = DEMO_KEYS.some((k) => k in spec) || /demo\.json$/.test(file) || (spec.scenes ?? []).some((s) => s.take || s.before?.take);
+  const demo = (isObj(spec) && DEMO_KEYS.some((k) => k in spec)) || /demo\.json$/.test(file) || (Array.isArray(spec?.scenes) && spec.scenes.some((s) => s?.take || s?.before?.take));
   let r;
   if (demo) r = checkDemo(spec);
   else {
