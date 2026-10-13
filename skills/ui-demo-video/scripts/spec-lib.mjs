@@ -11,13 +11,14 @@ import { createHash } from 'node:crypto';
 export const NATURAL = { 'whip-pan': 26 / 30, 'push-through': 40 / 30, 'focus-pull': 46 / 30 };
 export const KNOWN_TRANSITIONS = new Set(['zoom-blur', 'fade', 'cut', 'whip-pan', 'push-through', 'focus-pull']);
 
-// The overlap a transition eats, in seconds. Same order as resolveGap():
-// an explicit `sec`, else the transition's natural length, else transitionSec.
+// The overlap a transition eats, in seconds. Same order as resolveGap() in
+// template/src/transitions.ts and compositor/timeline.js: a non-zero `sec`,
+// else the transition's natural length, else transitionSec (which may be 0).
 export const gapSec = (spec, i) => {
   const t = spec.transitions?.[i] ?? spec.transition ?? 'zoom-blur';
   const o = typeof t === 'string' ? { type: t } : t;
   if (o.type === 'cut') return 0;
-  return o.sec || NATURAL[o.type] || spec.transitionSec || 0.5;
+  return ('sec' in o && o.sec) || NATURAL[o.type] || (spec.transitionSec ?? 0.5);
 };
 
 // Where each scene starts and ends on the final timeline. The template works
@@ -32,7 +33,8 @@ export const sceneSpans = (spec) => {
     start += Math.round(scene.durationSec * fps);
     return s;
   });
-  return { spans, totalSec: spans.length ? Math.max(...spans.map((s) => s.end)) : 0 };
+  // The renderer's length is where the last scene ends (totalFrames()).
+  return { spans, totalSec: spans.length ? spans[spans.length - 1].end : 0 };
 };
 
 // ---------------------------------------------------------------- known keys
