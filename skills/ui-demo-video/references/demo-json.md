@@ -76,7 +76,7 @@ run the second command, as often as you like.
 
 ## Top-level keys
 
-`demo.json` is a `video.json` plus four keys. Any other key is an error
+`demo.json` is a `video.json` plus four keys (and `style`, below). Any other key is an error
 (`validate` suggests the nearest real one), except notes: a key that starts
 with `_` or `$`, or is called `comment` or `notes`, is ignored.
 
@@ -87,16 +87,44 @@ with `_` or `$`, or is called `comment` or `notes`, is ignored.
 | `capture` | object | `{}` | Recording options shared by every take (next section). A take's own value wins |
 | `takes` | object | `{}` | Take name to take. Names follow the same character rule as `name`, because they name the clip files |
 | `scenes` | list | required | The scenes. Types and options: `scenes.md` |
+| `style` | string or object | `studio` | The look of the video: `"midnight"`, or `{ "preset": "midnight", "overrides": { "caption": { "size": 0.022 } } }`. See "Style" below and `styles.md` |
 | `theme`, `transition`, `transitionSec`, `transitions`, `music` | | see below | The same as in a `video.json` |
 | `width`, `height`, `fps` | number | 1920, 1080, 60 | The size and frame rate of the finished video (not of the recording) |
 
 A take that no scene uses is a warning (it would be recorded for nothing).
 A scene that names a take that is not defined is an error.
 
+### Style
+
+`"style"` is a name (`studio`, `midnight`, `editorial`, `terminal`, `sketch`)
+or an object with `preset` (a name, default `studio`) and `overrides` (tokens
+merged over the style, listed in `scripts/compositor/styles/README.md`).
+`node scripts/compose.mjs --list-styles` lists the names. An unknown name,
+or a `style` of any other shape, is a `validate` error that lists the valid
+names; an override group that does not exist is a warning with the nearest
+match. A `--style <name>` on the command line beats the file, for that run only.
+
+Precedence between `style` and `theme`:
+
+- `studio`: `theme.background`, `foreground`, `accent` and `tagColors` all
+  apply, as below.
+- Any other style owns the ground and the text colour. `theme.background` and
+  `theme.foreground` are ignored, with a warning. Change them with
+  `"overrides": { "palette": { "background": "...", "foreground": "..." } }`
+  (for a style with a shader ground, the `canvas` tokens).
+- `theme.accent`, `theme.tagColors` and `theme.logo` still apply under every
+  style, each style adapting the colours to its ground (`terminal` keeps its
+  own green accent whatever you give).
+- A `transition`, `transitions` or `transitionSec` you write is used as
+  written. Without them, the style's own default applies.
+
 ### Defaults the runner fills in
 
 The runner writes `build/video.json` from `demo.json`; `demo.json` itself is
-never changed. It adds:
+never changed. For `studio` (or no `style`) it adds the table below. For any
+other style it adds only `width`, `height` and `fps`: it writes no `theme`,
+`transition` or `transitionSec`, so the renderer can tell what you chose from
+what is a default, and the style supplies the rest. It adds:
 
 | Key | Default |
 |---|---|
@@ -249,6 +277,10 @@ out/<name>.vtt, .srt           captions on the real timeline
 out/<name>-chapters.txt        chapters
 out/<name>-poster.png          poster frame
 out/<name>-sheet.png           contact sheet of the finished video
+out/styles/<style>.mp4         with --styles: the video in each style
+out/<name>-styles.png          with --styles: one row per style, same moments
+out/<name>-styles.html         with --styles: a local page to flip between them
+build/styles/<style>.video.json  with --styles: the spec each style rendered
 out/<name>.gif                 only with --gif
 out/.compose-cache/            proxies of clips the renderer could not read
 ```
@@ -325,7 +357,7 @@ An option set to `false` is the same as an option left out.
 
 ```bash
 node scripts/demo.mjs <demo.json> [options]
-node scripts/demo.mjs init <dir> [--url <base>] [--name <name>] [--force]
+node scripts/demo.mjs init <dir> [--url <base>] [--name <name>] [--style <name>] [--force]
 ```
 
 | Option | Does |
@@ -336,6 +368,9 @@ node scripts/demo.mjs init <dir> [--url <base>] [--name <name>] [--force]
 | `--only render` | Skip recording; build the camera moves and render, then deliver |
 | `--only deliver` | Only the delivery step, on the last master (`out/<name>.mp4` and `build/video.json` must exist) |
 | `--no-deliver` | Stop after the render |
+| `--style <name>` | Render in this style for this run; `demo.json` is not edited. An unknown name stops at `validate` |
+| `--styles a,b` or `--styles all` | Compare looks (below). Needs two or more styles; not with `--style`, `--only capture`, `--only deliver` or `--takes` |
+| `--stale-ok` | Render even if a clip's take changed or has no `take.json` (normally the `camera` stage stops and names the take) |
 | `--no-rehearse` | Skip the dry run |
 | `--max-mb 10` | Size cap for the PR copy |
 | `--gif 12:6` | Also a GIF of 6 seconds starting at 12 |
@@ -346,7 +381,23 @@ node scripts/demo.mjs init <dir> [--url <base>] [--name <name>] [--force]
 | `--help` | Print the usage |
 
 `init` refuses to overwrite a `demo.json` (`--force` does) and refuses a
-temporary folder.
+temporary folder. `init --style <name>` writes `"style": "<name>"` into the
+starter and refuses a name the renderer does not have.
+
+### Comparing styles: `--styles`
+
+`--styles all` (or a list of two or more names) validates, directs the camera
+and checks once, so nothing is recorded twice, then renders the demo once per
+style, one after another, each from its own resolved spec
+(`build/styles/<style>.video.json`: transition lengths and camera moves follow
+the style). It then writes a comparison sheet and a picker page, and delivers
+nothing. It works with `--only render` on a finished build. The stages
+are `render` (every style), `sheet` and `picker`; `deliver` is reported as
+skipped. The sheet picks four to six moments from the timeline (the title, the
+first card, a wide clip, a zoomed clip, a transition, the end card) and shows
+the same ones in every row, each on that style's own timeline. The picker
+page is not opened for you. See `styles.md` for how to use it and how to keep
+the chosen style.
 
 ### Exit codes
 
@@ -378,13 +429,17 @@ One line on stdout:
   "plan": { "after": "take changed" },
   "outputs": { "master": "...", "sheet": "...", "pr": "...", "captions": "...",
                "srt": "...", "chapters": "...", "poster": "...", "gif": "..." },
-  "look": ["...-sheet.png"], "totalVideoSec": 26.4, "totalSec": 41.2 }
+  "look": ["...-sheet.png"], "style": "studio", "totalVideoSec": 26.4, "totalSec": 41.2 }
 ```
 
 On failure `ok` is false and there is `"error": { "stage": "rehearse",
 "message": "..." }` in place of the finished outputs. `gif` is there only
 with `--gif`. `look` lists the images to open next: the finished contact
-sheet first, then the contact sheets of the takes just recorded.
+sheet first, then the contact sheets of the takes just recorded. `style` is
+the style this run rendered in (`null` for a `--styles` run, `studio` when none is set). A `--styles` run
+also has `styles` (a list of `{ name, file, sec }`), `renderSec`, `sheet`,
+`moments` (the times and labels on the sheet), `picker`, and under `outputs`
+the keys `styles` (the folder), `styleSheet` and `picker`.
 
 ## A "before" from another branch
 

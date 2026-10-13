@@ -65,9 +65,10 @@ runs one command.
 4. **Direct and render.** An auto-camera reads what happened in each take
    (clicks, typing, scrolls) and zooms in on the action, the way Screen Studio
    does. The whole video is then rendered on the GPU, with transitions,
-   captions and callouts. [Remotion](https://remotion.dev) with
-   [remocn](https://remocn.dev) is an optional second renderer, for the tilted
-   3D product shot.
+   captions and callouts, in the style you pick (see Styles).
+   [Remotion](https://remotion.dev) with [remocn](https://remocn.dev) is an
+   optional second renderer, for the tilted 3D product shot; it draws only the
+   studio look.
 5. **Deliver.** A copy small enough for a pull request, captions (`.vtt` and
    `.srt`), chapters, a poster image, an optional GIF, a contact sheet to
    review the result, and a check that catches frozen or black stretches.
@@ -92,6 +93,29 @@ Title cards, issue cards that quote the bug as it was reported, recorded
 clips, before and after side by side, stills, and changelog or end cards.
 Clips take timed captions and callouts, and the video can carry music,
 narration and your logo.
+
+### Styles
+
+The video can be drawn in one of five looks. The recordings and scenes are the
+same in all of them; only the ground, type, captions, cards and motion change.
+`studio` is the default.
+
+| Style | The idea | Good for | Cost |
+| --- | --- | --- | --- |
+| `studio` | Soft light gradient, white window, pill captions | Slack, PRs and docs; the safe default | The least distinctive |
+| `midnight` | Near-black stage, glass captions, one pale accent | Launches, dark-mode products | A light app is a bright slab on it; slower pacing |
+| `editorial` | Warm paper, serif type, captions as margin notes | Changelogs, weekly updates | The least showy; the recording is smaller |
+| `terminal` | Mono type, typed text, stepped motion | Developer tools, PR demos for engineers | Cold for a consumer product |
+| `sketch` | A photo pinned to paper, annotated by hand | Bug-fix before and afters | Playful, so not for a formal audience |
+
+![The same demo in all five styles](assets/styles.jpg)
+
+You choose one with `"style": "midnight"` in `demo.json`. To compare them on
+your own demo, run `node scripts/demo.mjs demo.json --styles all`: it renders
+the demo in every style from the same recordings (nothing is recorded again)
+and writes a comparison sheet and a page where the number keys flip between
+the videos. Details are in
+[references/styles.md](skills/ui-demo-video/references/styles.md).
 
 ### Requirements
 

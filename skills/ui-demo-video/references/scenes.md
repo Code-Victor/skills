@@ -58,7 +58,7 @@ Make the still with `node scripts/capture.mjs shot --url <u> --out
 | Option | Does |
 |---|---|
 | `aspect` | The recording's width / height. Leave it out: the runner sets it from the take, and for a file given by `src` the renderer reads it from the file. Write it only to force a different shape |
-| `tag`, `caption` | One caption under the frame, with a coloured label ("Before", "After") |
+| `tag`, `caption` | One caption with a label ("Before", "After"). Where it sits and how it enters depend on the style (see Captions) |
 | `captions` | `[{ "atSec", "text", "tag"? }]`: several in turn, for a scene that walks through steps. Each shows until the next |
 | `autoCamera` | `true` or options: let `scripts/auto-camera.mjs` write `moves` from the take's events file |
 | `moves` | Camera keyframes `{ atSec, x, y, zoom }` (x, y = focus as fractions of the recording) |
@@ -111,14 +111,47 @@ on, mark it in the steps or add a key.
 - One short sentence, sentence case, plain words, at most 42 characters a
   line (Netflix). Say what it does for the user, not how it's built.
 - Reading speed: 15 to 17 characters a second reads comfortably; 20 is the
-  ceiling for adults. `check-video.mjs` warns past 20, counting the pill's
+  ceiling for adults. `check-video.mjs` warns past 20, counting the caption's
   entrance and exit.
 - Each caption needs at least 1.5 s on screen, however short.
-- Captions sit in a band under the frame, never over the UI. They're burned in
-  because Slack and GitHub play videos muted and don't show sidecar tracks;
-  `deliver.mjs` also writes `.vtt` and `.srt` for anywhere that does.
+- Captions stay clear of the UI. In `studio`, `midnight` and `terminal` they sit
+  in a band under the frame; in `editorial` they are margin notes in a column
+  beside the recording; in `sketch` they are written into the strip of the
+  photo print. They're burned in because Slack and GitHub play videos muted and
+  don't show sidecar tracks; `deliver.mjs` also writes `.vtt` and `.srt` for
+  anywhere that does.
+- Some styles type the caption instead of fading it in: `terminal` at 50
+  characters a second after a 0.4 s delay, `sketch` at 16 a second after 0.3 s.
+  A caption is complete after its length divided by that rate plus the delay,
+  so a long caption on a short scene is still being written when the scene
+  ends. `sketch` also shortens a caption that will not fit in two lines with an
+  ellipsis. `check-video.mjs` does not know about typing speed.
 - `demo.mjs` lists a caption that is too fast or too short in its summary;
   fix the text or give the scene more time.
+
+## Emphasis
+
+`*word*` in a title, a caption, a list item or a line of the issue card marks
+one accented word: the accent colour in most styles, italic in `editorial`. Write
+`\*` for a real asterisk. A lone `*` with no partner stays as typed. The
+`.vtt` and `.srt` files, the chapters and the reading-speed check ignore the
+markers.
+
+```json
+{ "type": "clip", "take": "after", "durationSec": 7, "caption": "A *toast* confirms the invite" }
+```
+
+## Transitions and the style
+
+The names (`zoom-blur`, `focus-pull`, `push-through`, `whip-pan`, `fade`,
+`cut`) and the per-gap `transitions` list mean the same in every style, but
+what they look like is the style's: `studio` blurs and zooms, `midnight` and
+`editorial` tone them down, and `terminal` and `sketch` redraw them in their own
+language (a caret wipe, a line repaint, a line scroll, a hard slide in
+`terminal`; a nudge of the paper and a cut in `sketch`). Their lengths follow
+the style too, unless you write `sec`. A style may also add a transition of its
+own that you can name only under that style (`page-slide` in `editorial`,
+`caret-wipe` in `terminal`, `paper-swap` in `sketch`). See `styles.md`.
 
 ## Callouts
 
@@ -132,7 +165,8 @@ labels under 60 characters.
   sets `box`, `atSec` and `forSec` on every run: it appears at the mark
   (`delaySec` later, if given) and stays up to `maxSec` (2.5), but ends just
   after the next click, which usually changes what it circles. A mark also
-  draws the camera.
+  draws the camera. The mark itself is the style's: a ring in `studio`, `midnight`
+  and `editorial`, corner brackets in `terminal`, a scribbled circle in `sketch`.
   For something the camera shouldn't move to (a toast while the shot stays
   wide), mark it with `"look": false`.
 - **By hand**: `{ "atSec": 14.3, "forSec": 2.1, "box": [x, y, w, h] }`, box
