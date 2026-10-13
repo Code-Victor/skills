@@ -18,7 +18,27 @@ export const gapSec = (spec, i) => {
   const t = spec.transitions?.[i] ?? spec.transition ?? 'zoom-blur';
   const o = typeof t === 'string' ? { type: t } : t;
   if (o.type === 'cut') return 0;
-  return ('sec' in o && o.sec) || NATURAL[o.type] || (spec.transitionSec ?? 0.5);
+  // spec.style is the resolved style once fillTiming has put it there: it may add transitions of its own
+  return ('sec' in o && o.sec) || spec.style?.transition?.custom?.[o.type]?.sec || NATURAL[o.type] || (spec.transitionSec ?? 0.5);
+};
+
+// The style a spec (or a --style override) asks for, by name; undefined means the default, studio.
+export const styleName = (spec, override) => {
+  const st = override ?? spec?.style;
+  return typeof st === 'string' ? st : st?.preset;
+};
+// A spec for a style other than studio holds only what the author wrote; the
+// style supplies the rest. These are the values it supplies for timing.
+// `style` is the RESOLVED style (compositor/styles resolveStyle(spec)). Returns
+// a copy with transition and transitionSec filled the way compose.mjs does, so
+// the timeline sums (captions, chapters, checks) match the rendered video.
+export const fillTiming = (spec, style) => {
+  const out = { ...spec, style };
+  if (style?.transition) {
+    out.transition ??= style.transition.default;
+    out.transitionSec ??= style.transition.sec;
+  }
+  return out;
 };
 
 // Where each scene starts and ends on the final timeline. The template works
@@ -194,11 +214,20 @@ export const DEFAULTS = {
 // a recording (a clip or image given as `src`, or a take not recorded yet) the
 // aspect is left unset: compose.mjs probes the file itself, and the file check
 // compares only an aspect somebody actually wrote.
-export const resolveSpec = (demo, aspects = {}) => {
+//
+// `opts.style` is a --style override: it replaces demo.style in the result.
+// With studio (or no style) the authoring defaults below are written in, as
+// they always were. With any other style the spec holds only what the author
+// wrote for theme, transition and transitionSec, so the engine can tell a
+// choice from a default and the style supplies the rest.
+export const resolveSpec = (demo, aspects = {}, opts = {}) => {
   const spec = {};
   for (const k of TOP_KEYS) if (demo[k] !== undefined) spec[k] = structuredClone(demo[k]);
-  for (const [k, v] of Object.entries(DEFAULTS)) if (spec[k] === undefined) spec[k] = structuredClone(v);
-  spec.theme = { ...DEFAULTS.theme, ...spec.theme };
+  if (opts.style) spec.style = opts.style;
+  const styled = (styleName(spec) ?? 'studio') !== 'studio';
+  const KEEP_BLANK = styled ? ['theme', 'transition', 'transitionSec'] : [];
+  for (const [k, v] of Object.entries(DEFAULTS)) if (spec[k] === undefined && !KEEP_BLANK.includes(k)) spec[k] = structuredClone(v);
+  if (!styled) spec.theme = { ...DEFAULTS.theme, ...spec.theme };
   const fill = (o) => {
     if (o?.take) {
       o.src = clipPath(o.take);

@@ -124,14 +124,15 @@ export const makeSheet = async ({ styles, moments, out, workDir, run, aspect = 1
   // One ffmpeg per style: the same file opened once per moment, one frame each.
   for (const s of styles) {
     const args = ['-v', 'error', '-y'];
-    for (const m of moments) args.push('-ss', String(m.t), '-i', s.file);
-    moments.forEach((m, k) => args.push('-map', `${k}:v:0`, '-frames:v', '1', '-vf', `scale=${CELL_W}:${cellH}`, '-q:v', '2', join(workDir, `${s.name}-${k}.jpg`)));
+    const ms = s.moments ?? moments;
+    for (const m of ms) args.push('-ss', String(m.t), '-i', s.file);
+    ms.forEach((m, k) => args.push('-map', `${k}:v:0`, '-frames:v', '1', '-vf', `scale=${CELL_W}:${cellH}`, '-q:v', '2', join(workDir, `${s.name}-${k}.jpg`)));
     const r = await run(`sheet-${s.name}`, 'ffmpeg', args, { timeoutSec: 120 });
     if (r.code !== 0) return { ok: false, error: `ffmpeg could not cut frames from ${s.file}: ${r.text.trim().split('\n').slice(-2).join(' | ')}` };
   }
   const W = GAP + LABEL_W + moments.length * (CELL_W + GAP);
   const H = GAP + 44 + styles.length * (HEAD_H + cellH + GAP);
-  const rows = styles.map((s) => `<div class="name" style="height:${HEAD_H + cellH}px"><span>${esc(s.name)}</span></div>${moments.map((m, k) =>
+  const rows = styles.map((s) => `<div class="name" style="height:${HEAD_H + cellH}px"><span>${esc(s.name)}</span></div>${(s.moments ?? moments).map((m, k) =>
     `<figure><figcaption><b>${m.t.toFixed(1)} s</b> <i>${esc(m.label)}</i></figcaption><img width="${CELL_W}" height="${cellH}" src="${esc(`${s.name}-${k}.jpg`)}"></figure>`).join('')}`).join('');
   const html = `<!doctype html><meta charset="utf-8"><style>
 html,body{margin:0;background:#141416;color:#e6e6ea;font:500 15px/1.3 system-ui,-apple-system,"Segoe UI",sans-serif}

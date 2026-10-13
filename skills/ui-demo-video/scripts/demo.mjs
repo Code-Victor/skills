@@ -74,7 +74,8 @@ import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { checkDemo, checkSpec } from './check-video.mjs';
 import { chooseMoments, makeSheet, pickerHtml } from './style-picker.mjs';
-import { CAPTURE_OPTIONS, SAFE_NAME, captureArgs, clipPath, resolveSpec, takeHash, takeSpec, takesUsed } from './spec-lib.mjs';
+import { resolveStyle } from './compositor/styles/index.js';
+import { CAPTURE_OPTIONS, SAFE_NAME, captureArgs, clipPath, fillTiming, resolveSpec, styleName, takeHash, takeSpec, takesUsed } from './spec-lib.mjs';
 
 const T0 = Date.now();
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -156,7 +157,7 @@ const listStyles = () => {
 const unknownStyle = (n, known) => `style "${n}" is not one of this renderer's styles (valid: ${known.styles.map((x) => x.name).join(', ')})${known.legacy ? '; this renderer has no named styles yet' : ''}`;
 // Only a renderer that lists its styles takes --style; the old one has one look.
 const styleFlag = (n) => (known && !known.legacy && n ? ['--style', n] : []);
-const styleOf = (d) => (typeof d?.style === 'string' ? d.style : d?.style?.preset);
+const styleOf = (d) => styleName(d);
 
 // ---------------------------------------------------------------- init
 
@@ -557,6 +558,7 @@ if (justCapture) await finish();
 // ---------------------------------------------------------------- 6-7 camera, check
 
 let specPath = join(paths.build, 'video.json');
+let allAspects = {};
 if (doRender) {
   await stage('camera', async () => {
     // A clip is only trusted if the take that made it is still the take
@@ -582,9 +584,11 @@ if (doRender) {
       if (w && h) aspects[n] = +(w / h).toFixed(3);
       else if (!existsSync(clipFile(n))) return fail('camera', `take "${n}" has no clip at ${clipFile(n)} (record it first: run without --only)`);
     }
-    const spec = resolveSpec(demo, aspects);
-    // The renderer reads the style from the spec; pass demo.json's through untouched.
-    if (demo.style !== undefined && spec.style === undefined) spec.style = structuredClone(demo.style);
+    allAspects = aspects;
+    // --style replaces demo.json's style in the resolved spec (the file itself is
+    // never edited). The spec holds only what the author wrote for theme and
+    // transitions when the style is not studio; the style supplies the rest.
+    const spec = resolveSpec(demo, aspects, { style: opt.style });
     writeFileSync(specPath, `${JSON.stringify(spec, null, 2)}\n`);
     const r = await run('auto-camera', process.execPath, [join(HERE, 'auto-camera.mjs'), specPath, '--public', dir]);
     if (r.code !== 0) return fail('camera', [`auto-camera exited ${r.code}`, tail(r.text)]);
@@ -643,12 +647,20 @@ async function compareStyles() {
   const stylesDir = join(paths.out, 'styles');
   mkdirSync(stylesDir, { recursive: true });
   const done = [];
+  const specs = {};
   await stage('render', async () => {
     for (const n of styleNames) {
       const t = Date.now();
       const file = join(stylesDir, `${n}.mp4`);
       rmSync(file, { force: true });
-      const r = await run(`render-${n}`, process.execPath, [COMPOSE, specPath, '--out', file, '--clips', dir, ...styleFlag(n), '--json'], { timeoutSec: 1800 });
+      // Each style renders its own resolved spec: the timeline (transition lengths) and camera follow that style.
+      const sp = join(paths.build, 'styles', `${n}.video.json`);
+      mkdirSync(dirname(sp), { recursive: true });
+      writeFileSync(sp, `${JSON.stringify(resolveSpec(demo, allAspects, { style: n }), null, 2)}\n`);
+      const cam = await run(`camera-${n}`, process.execPath, [join(HERE, 'auto-camera.mjs'), sp, '--public', dir]);
+      if (cam.code !== 0) return fail('render', [`style "${n}": auto-camera exited ${cam.code}`, tail(cam.text)]);
+      specs[n] = JSON.parse(readFileSync(sp, 'utf8'));
+      const r = await run(`render-${n}`, process.execPath, [COMPOSE, sp, '--out', file, '--clips', dir, ...styleFlag(n), '--json'], { timeoutSec: 1800 });
       const j = lastJson(r.text);
       if (r.code !== 0 || j?.ok === false) return fail('render', [`style "${n}": compose.mjs exited ${r.code}${j?.error ? `: ${j.error}` : ''}`, tail(r.text)]);
       if (!existsSync(file)) return fail('render', `style "${n}": the renderer reported success but ${file} does not exist`);
@@ -666,7 +678,13 @@ async function compareStyles() {
   const pickerFile = join(paths.out, `${name}-styles.html`);
   const spec = JSON.parse(readFileSync(specPath, 'utf8'));
   await stage('sheet', async () => {
-    const moments = chooseMoments(spec);
+    // The same moments in every row, picked on each style's own timeline (its
+    // transitions are a different length, so the same moment is at a different time).
+    const timeline = (n) => (n === 'studio' ? specs[n] : fillTiming(specs[n], resolveStyle(specs[n])));
+    const per = Object.fromEntries(done.map((d) => [d.name, chooseMoments(timeline(d.name))]));
+    const keys = per[done[0].name].map((m) => m.key).filter((k) => done.every((d) => per[d.name].some((m) => m.key === k)));
+    for (const d of done) d.moments = keys.map((k) => per[d.name].find((m) => m.key === k));
+    const moments = done[0].moments;
     const probe = spawnSync('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'csv=p=0', done[0].file], { encoding: 'utf8' });
     const [w, h] = probe.stdout.trim().split(',').map(Number);
     const r = await makeSheet({

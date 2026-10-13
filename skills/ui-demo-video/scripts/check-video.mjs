@@ -22,9 +22,10 @@ import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
   DEMO_KEYS, KNOWN_TRANSITIONS, SAFE_NAME, SCENE_KEYS, STEP_KEYS, TAKE_KEYS, THEME_KEYS, TOP_KEYS,
-  gapSec, isNote, resolveSpec, sceneSpans, takesUsed, STYLE_KEYS,
+  fillTiming, gapSec, isNote, resolveSpec, sceneSpans, styleName, takesUsed, STYLE_KEYS,
 } from './spec-lib.mjs';
-import { STYLES, TOKEN_GROUPS, flatten, styleNames, unknownStyleMessage } from './compositor/styles/index.js';
+import { STYLES, TOKEN_GROUPS, flatten, resolveStyle, styleNames, unknownStyleMessage } from './compositor/styles/index.js';
+import { stripEmphasis } from './compositor/layout.js';
 
 // Reading speed: 20 characters a second is the ceiling Netflix sets for adult
 // subtitles (15 to 17 reads comfortably); anything needs about 1.5 s.
@@ -64,7 +65,7 @@ const media = (path) => {
  * Returns { errors, warnings, totalSec, scenes }.
  */
 const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
-const str = (v) => (typeof v === 'string' ? v : '');
+const str = (v) => (typeof v === 'string' ? stripEmphasis(v) : '');
 const wrongShape = (e) => ({ errors: [`something in this file has the wrong shape, so it could not be checked (${e.message})`], warnings: [], totalSec: 0, scenes: 0 });
 export function checkSpec(spec, opts = {}) {
   if (!isObj(spec)) return { errors: ['the file must hold one JSON object (got ' + (spec === null ? 'null' : Array.isArray(spec) ? 'a list' : typeof spec) + ')'], warnings: [], totalSec: 0, scenes: 0 };
@@ -101,8 +102,10 @@ function checkSpecInner(spec, { pub = '.', files = true, demo = false } = {}) {
     return { ...out, totalSec: 0, scenes: 0 };
   }
   // A demo.json fills these in; a video.json must carry them.
+  // For a style other than studio, theme and transitions are the style's unless the author wrote them.
+  const styled = (styleName(spec) ?? 'studio') !== 'studio' && STYLES[styleName(spec)];
   if (!demo) for (const k of ['width', 'height', 'fps', 'theme', 'transition', 'transitionSec'])
-    if (spec[k] === undefined) errors.push(`spec: missing "${k}"`);
+    if (spec[k] === undefined && !(styled && ['theme', 'transition', 'transitionSec'].includes(k))) errors.push(`spec: missing "${k}"`);
 
   // Transitions of the wrong shape are reported, then replaced by the default
   // so the timeline sums below cannot throw.
@@ -113,7 +116,8 @@ function checkSpecInner(spec, { pub = '.', files = true, demo = false } = {}) {
     if ('sec' in o && !(typeof o.sec === 'number' && o.sec >= 0)) { errors.push(`${at}: transition sec must be a number of seconds`); return false; }
     return true;
   };
-  const tspec = { fps: 60, ...spec };
+  let tspec = { fps: 60, ...spec };
+  if (styled) { try { tspec = fillTiming(tspec, resolveStyle(spec)); } catch { /* a bad style is reported above */ } }
   if (spec.transition !== undefined && !okTransition(spec.transition, 'transition')) tspec.transition = 'zoom-blur';
   if (spec.transitionSec !== undefined && !(typeof spec.transitionSec === 'number' && spec.transitionSec >= 0)) {
     errors.push('transitionSec must be a number of seconds');
@@ -133,6 +137,7 @@ function checkSpecInner(spec, { pub = '.', files = true, demo = false } = {}) {
 
   const readable = (at, text, visibleSec) => {
     if (!text || typeof text !== 'string') return;
+    text = stripEmphasis(text); // *word* markers are not read
     const need = Math.max(1.5, text.length / CPS);
     if (visibleSec < need)
       warnings.push(`${at}: "${text.slice(0, 40)}" is on screen ${visibleSec.toFixed(1)}s, needs about ${need.toFixed(1)}s to read`);

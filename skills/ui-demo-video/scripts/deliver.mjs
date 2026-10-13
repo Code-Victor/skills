@@ -25,7 +25,9 @@
 import { spawn } from 'node:child_process';
 import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
-import { sceneSpans } from './spec-lib.mjs';
+import { fillTiming, sceneSpans, styleName } from './spec-lib.mjs';
+import { resolveStyle } from './compositor/styles/index.js';
+import { stripEmphasis } from './compositor/layout.js';
 
 const T0 = Date.now();
 const [input, ...rest] = process.argv.slice(2);
@@ -39,7 +41,11 @@ if (!input || !flag('spec')) {
 }
 const JSON_OUT = rest.includes('--json');
 const video = resolve(input);
-const spec = JSON.parse(readFileSync(flag('spec'), 'utf8'));
+let spec = JSON.parse(readFileSync(flag('spec'), 'utf8'));
+// A spec for a style other than studio holds only what the author wrote: the
+// style's own transition and length complete it, as in compose.mjs, so the
+// cue times below match the rendered video.
+if ((styleName(spec) ?? 'studio') !== 'studio') spec = fillTiming(spec, resolveStyle(spec));
 const outDir = resolve(flag('out') ?? dirname(video));
 const name = basename(video).replace(/\.mp4$/, '');
 const maxMb = +(flag('max-mb') ?? 10);
@@ -91,7 +97,8 @@ for (const { start, end, scene: s } of spans) {
   // Blank lines would end a cue early (VTT and SRT both read an empty line as
   // the end of the block), so drop them; a cue with nothing left is skipped.
   const add = (from, to, raw) => {
-    const text = (raw ?? '').split('\n').map((l) => l.trim()).filter(Boolean).join('\n');
+    // *word* emphasis markers are for the picture; text files get plain words.
+    const text = stripEmphasis(raw ?? '').split('\n').map((l) => l.trim()).filter(Boolean).join('\n');
     if (text) cues.push({ from: Math.max(0, from), to: Math.max(from + 0.5, to), text });
   };
   if (s.type === 'title') add(start + 0.3, end - 0.3, [s.text, s.subtitle].filter(Boolean).join('\n'));
@@ -117,7 +124,7 @@ const writeText = () => {
   // Chapters: scenes with a `chapter`, or each title and issue card.
   const mmss = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
   const chapters = spans
-    .map(({ start, scene: s }) => ({ start, label: s.chapter ?? (s.type === 'title' ? s.text : s.type === 'issue' ? 'The problem' : null) }))
+    .map(({ start, scene: s }) => ({ start, label: stripEmphasis(s.chapter ?? (s.type === 'title' ? s.text : s.type === 'issue' ? 'The problem' : null) ?? '') || null }))
     .filter((c, i, all) => c.label && c.label !== all[i - 1]?.label);
   writeFileSync(join(outDir, `${name}-chapters.txt`), `${chapters.map((c) => `${mmss(c.start)} ${c.label}`).join('\n')}\n`);
 };
@@ -193,7 +200,7 @@ const scan = async () => {
   const issues = [];
   for (const m of log.matchAll(/freeze_start: ([\d.]+)[\s\S]*?freeze_duration: ([\d.]+)/g)) {
     const s = sceneAt(+m[1] + 0.1);
-    if (s && (s.type === 'clip' || s.type === 'split')) issues.push(`still for ${(+m[2]).toFixed(1)}s from ${(+m[1]).toFixed(1)}s in a clip scene (${s.caption ?? s.src ?? ''})`);
+    if (s && (s.type === 'clip' || s.type === 'split')) issues.push(`still for ${(+m[2]).toFixed(1)}s from ${(+m[1]).toFixed(1)}s in a clip scene (${stripEmphasis(s.caption ?? s.src ?? '')})`);
   }
   for (const m of log.matchAll(/black_start:([\d.]+) black_end:([\d.]+)/g)) issues.push(`black from ${(+m[1]).toFixed(1)}s to ${(+m[2]).toFixed(1)}s`);
   return issues;
