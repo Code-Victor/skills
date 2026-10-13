@@ -3,11 +3,14 @@
 // A spec picks one with  "style": "midnight"  or
 // "style": { "preset": "midnight", "overrides": { "post": { "grain": 0.02 } } }.
 import crypto from 'node:crypto';
-import { DEFAULTS } from '../../spec-lib.mjs';
+import { withAlpha as alpha, contrast, ensureContrast, luminance, mix, parseColor } from '../color.js';
 import studio from './studio.js';
 import midnight from './midnight.js';
+import editorial from './editorial.js';
+import terminal from './terminal.js';
+import sketch from './sketch.js';
 
-export const STYLES = { studio, midnight };
+export const STYLES = { studio, midnight, editorial, terminal, sketch };
 // Test hook: UI_DEMO_EXTRA_STYLES=/abs/path/file.js (default export { name: style, ... } or one style) adds styles that are not registered yet.
 if (process.env.UI_DEMO_EXTRA_STYLES) {
   const extra = (await import(process.env.UI_DEMO_EXTRA_STYLES)).default;
@@ -47,35 +50,49 @@ export const styleRequest = (spec, flagStyle) => {
 };
 
 const clone = (v) => (isObj(v) ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, clone(x)])) : Array.isArray(v) ? v.map(clone) : v);
-const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const fnKey = (k, v) => (typeof v === 'function' ? `fn:${v.toString()}` : v);
 
 /**
- * The style a render uses: preset + overrides + the spec's `theme` on top of the
- * palette. demo.mjs fills theme defaults into every spec, so for a style other
- * than studio a theme value equal to that authoring default counts as "not set"
- * and the style's own palette shows through. Same for the default transition.
- * `flagStyle` is --style (it beats the spec).
+ * The style a render uses: preset + overrides, then what the spec's `theme` may change.
+ *   studio     theme.background / foreground / accent / tagColors all apply (as always).
+ *   any other  the style owns its ground and text colour: theme.background and
+ *              theme.foreground are ignored (a note says so; change them with
+ *              style.overrides). theme.accent and theme.tagColors still apply, passed
+ *              through the style's palette.mapAccent(colour, tools) and
+ *              palette.mapTag(name, colour, tools) when it has them, so a style can
+ *              adapt an incoming colour to its ground (lift it on a dark one).
+ * What is in the spec is what the author wrote (spec-lib no longer fills defaults for a styled
+ * spec), so there is no "equal to the default means unset" guessing.
+ * `flagStyle` is --style (it beats the spec). The result has a non-enumerable `notes` array of warnings.
  */
 export const resolveStyle = (spec, flagStyle) => {
   const { preset, overrides } = styleRequest(spec, flagStyle);
   if (!STYLES[preset]) throw new Error(unknownStyleMessage(preset));
   let s = clone(deepMerge(flatten(preset), overrides));
-  const isStudio = preset === 'studio';
+  const isStudio = preset === 'studio', notes = [];
   const t = spec.theme ?? {};
-  const set = (k) => t[k] !== undefined && (isStudio || !same(t[k], DEFAULTS.theme[k]));
-  if (set('foreground')) s.palette.foreground = t.foreground;
-  if (set('accent')) s.palette.accent = t.accent;
-  if (set('tagColors')) {   // per tag: a colour equal to the authoring default is not the author's choice
-    const own = isStudio ? t.tagColors : Object.fromEntries(Object.entries(t.tagColors).filter(([k, v]) => DEFAULTS.theme.tagColors?.[k] !== v));
-    s.palette.tagColors = deepMerge(s.palette.tagColors ?? {}, own);
+  if (isStudio) {
+    if (t.foreground !== undefined) s.palette.foreground = t.foreground;
+    if (t.accent !== undefined) s.palette.accent = t.accent;
+    if (t.tagColors !== undefined) s.palette.tagColors = deepMerge(s.palette.tagColors ?? {}, t.tagColors);
+    if (t.background !== undefined) { s.palette.background = t.background; s.canvas = { ...s.canvas, background: { kind: 'css' } }; }
+  } else {
+    if (t.background !== undefined || t.foreground !== undefined)
+      notes.push(`theme.${[t.background !== undefined && 'background', t.foreground !== undefined && 'foreground'].filter(Boolean).join(' and theme.')} ignored: style "${preset}" owns its ground and text colour (change them with "style": { "preset": "${preset}", "overrides": { "palette": { "background": ..., "foreground": ... } } })`);
+    const P = s.palette;
+    const tools = { palette: P, ground: s.canvas.matte, parse: parseColor, luminance, contrast, mix, alpha, ensureContrast };
+    if (t.accent !== undefined) P.accent = typeof P.mapAccent === 'function' ? (P.mapAccent(t.accent, tools) ?? t.accent) : t.accent;
+    if (t.tagColors) {
+      const own = Object.fromEntries(Object.entries(t.tagColors).map(([k, v]) => [k, typeof P.mapTag === 'function' ? (P.mapTag(k, v, tools) ?? v) : v]));
+      P.tagColors = deepMerge(P.tagColors ?? {}, own);
+    }
   }
-  if (set('background')) { s.palette.background = t.background; s.canvas = { ...s.canvas, background: { kind: 'css' } }; }
   if (s.canvas.background.kind !== 'css' && s.canvas.model === 'scene') s.canvas.model = 'shared';
   if (s.post.dither > 0 || s.post.grain > 0 || s.post.vignette > 0 || s.caption.variant === 'glass') s.needsMain = true;
   s.name = preset;
   s.builders = Object.keys(s.build ?? {});
   s.hash = crypto.createHash('sha1').update(JSON.stringify(s, fnKey)).digest('hex').slice(0, 8);
+  Object.defineProperty(s, 'notes', { value: notes, enumerable: false });
   return s;
 };
 

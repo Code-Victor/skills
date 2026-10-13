@@ -37,3 +37,30 @@ export const rgb01 = (css, resolved = {}) => {
 };
 /** Relative luma 0..1 (for choosing text on a fill). */
 export const luma = (css, resolved = {}) => { const [r, g, b] = rgb01(css, resolved); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+
+// ---- helpers for a style's palette.mapTag / palette.mapAccent (they receive these as `tools`) ----
+const toLinear = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+/** WCAG relative luminance 0..1, or null for a colour this parser cannot read (oklch, hsl, names: map those untouched). */
+export const luminance = (css, resolved = {}) => {
+  const c = parseColor(css) ?? resolved[css];
+  return c ? 0.2126 * toLinear(c[0]) + 0.7152 * toLinear(c[1]) + 0.0722 * toLinear(c[2]) : null;
+};
+/** WCAG contrast ratio of two colours, or null when either is unreadable. */
+export const contrast = (a, b, resolved = {}) => {
+  const x = luminance(a, resolved), y = luminance(b, resolved);
+  return x === null || y === null ? null : (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+};
+const hex2 = (v) => Math.round(Math.min(255, Math.max(0, v))).toString(16).padStart(2, '0');
+/** `a` moved `t` (0..1) toward `b`, as #rrggbb; `a` unchanged when either is unreadable. */
+export const mix = (a, b, t, resolved = {}) => {
+  const x = parseColor(a) ?? resolved[a], y = parseColor(b) ?? resolved[b];
+  return x && y ? `#${[0, 1, 2].map((i) => hex2(x[i] + (y[i] - x[i]) * t)).join('')}` : a;
+};
+/** `fg` nudged toward white (on a dark `bg`) or black (on a light one) until it reaches `min`:1 against `bg`. */
+export const ensureContrast = (fg, bg, min = 4.5, resolved = {}) => {
+  const L = luminance(bg, resolved);
+  if (L === null || luminance(fg, resolved) === null) return fg;
+  const target = L < 0.4 ? '#ffffff' : '#000000';
+  for (let t = 0; t <= 1.0001; t += 0.05) { const c = mix(fg, target, t, resolved); if (contrast(c, bg, resolved) >= min) return t === 0 ? fg : c; }
+  return target;
+};

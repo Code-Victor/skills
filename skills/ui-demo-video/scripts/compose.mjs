@@ -25,6 +25,7 @@
 //
 // No npm dependencies: Node 22+, Chrome, ffmpeg and ffprobe.
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -145,12 +146,10 @@ spec.theme ??= {};
 // The style comes first: it supplies the palette, transition and look the theme and spec then override.
 let style;
 try { style = resolveStyle(spec, flags.style); } catch (e) { fail(e.message); }
-if (style.name !== 'studio') {   // demo.mjs writes the authoring defaults into every spec; for a style they mean "not set"
-  if (spec.transition === undefined || spec.transition === 'zoom-blur') spec.transition = style.transition.default;
-  if (spec.transitionSec === undefined || spec.transitionSec === 0.5 || spec.transitionSec === 0.45) spec.transitionSec = style.transition.sec;
-}
-spec.theme.background ??= style.palette.background; spec.theme.foreground ??= style.palette.foreground;
+for (const n of style.notes ?? []) warn(n);
+// What is in the spec is what the author wrote (spec-lib fills defaults only for studio): the style supplies the rest.
 spec.transition ??= style.transition.default; spec.transitionSec ??= style.transition.sec;
+spec.theme.background = style.palette.background; spec.theme.foreground = style.palette.foreground;
 spec.style = style;   // timeline.js and the page read the resolved style from the spec
 setStyleHash(style.hash);
 if (!Array.isArray(spec.scenes) || !spec.scenes.length) fail('video.json has no scenes');
@@ -325,7 +324,16 @@ const fontsDir = path.join(HOME_CACHE, 'fonts');
 const FONT_HOST = process.env.UI_DEMO_FONTS_HOST ?? 'https://fonts.googleapis.com';
 const fontKey = (f) => {
   const slug = f.family.toLowerCase().replace(/[^a-z0-9]+/g, '-'), w = [...f.weights].sort((x, y) => x - y).join('.');
-  return slug === 'inter' && w === '500.600.700' ? 'inter' : `${slug}-${w}`;   // 'inter' is the name earlier versions cached under
+  const extra = `${f.italic ? '-i' : ''}${f.opsz !== undefined && f.opsz !== null ? `-o${String(f.opsz).replace('..', '_')}` : ''}`;
+  return slug === 'inter' && w === '500.600.700' && !extra ? 'inter' : `${slug}-${w}${extra}`;   // 'inter' is the name earlier versions cached under
+};
+/** The Google Fonts css2 query for a font token: axes in the alphabetical order the API demands (ital, opsz, wght). */
+const fontQuery = (f) => {
+  const ws = [...f.weights].sort((x, y) => x - y), hasO = f.opsz !== undefined && f.opsz !== null;
+  const axes = [f.italic ? 'ital' : null, hasO ? 'opsz' : null, 'wght'].filter(Boolean).join(',');
+  const rows = [];
+  for (const it of f.italic ? [0, 1] : [null]) for (const w of ws) rows.push([it, hasO ? f.opsz : null, w].filter((v) => v !== null).join(','));
+  return `${encodeURIComponent(f.family).replace(/%20/g, '+')}:${axes}@${rows.join(';')}`;
 };
 const ensureFont = async (f) => {
   const key = fontKey(f), css = path.join(fontsDir, `${key}.css`), marker = path.join(fontsDir, `${key}.failed`);
@@ -335,7 +343,7 @@ const ensureFont = async (f) => {
   try {
     fs.mkdirSync(fontsDir, { recursive: true });
     const ua = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
-    const url = `${FONT_HOST}/css2?family=${encodeURIComponent(f.family).replace(/%20/g, '+')}:wght@${[...f.weights].sort((x, y) => x - y).join(';')}&display=block`;
+    const url = `${FONT_HOST}/css2?family=${fontQuery(f)}&display=block`;
     const res = await fetch(url, { headers: { 'user-agent': ua }, signal: AbortSignal.timeout(4000) });
     let text = await res.text();
     if (!res.ok || !text.includes('@font-face')) throw new Error(`HTTP ${res.status}`);
@@ -360,7 +368,7 @@ const ensureFonts = async () => {
   const seen = new Map();
   for (const f of Object.values(style.fonts)) if (f.family) seen.set(fontKey(f), f);
   const keys = (await Promise.all([...seen.values()].map(ensureFont))).filter(Boolean);
-  return { keys, loads: [...seen.values()].flatMap((f) => f.weights.map((w) => `${w} 16px "${f.family}"`)) };
+  return { keys, loads: [...seen.values()].flatMap((f) => f.weights.flatMap((w) => [`${w} 16px "${f.family}"`, ...(f.italic ? [`italic ${w} 16px "${f.family}"`] : [])])) };
 };
 
 // ------------------------------------------------------------ server
@@ -551,7 +559,7 @@ const captureJobs = async (jobs) => {
           const r = await page.call('Runtime.evaluate', {
             returnByValue: true,
             expression: `(()=>{const e=document.querySelector(${JSON.stringify(s.rect)});if(!e)return null;const r=e.getBoundingClientRect();const o={l:r.left,t:r.top,r:r.right,b:r.bottom};
-              ${s.chars ? `const t=e.matches('[data-type]')?e:(e.querySelector('[data-type]')||e);const w=document.createTreeWalker(t,NodeFilter.SHOW_TEXT);const rights=[];let top=1e9,bot=0,left=null;for(let n;(n=w.nextNode());){for(let i=0;i<n.data.length;i++){const q=document.createRange();q.setStart(n,i);q.setEnd(n,i+1);const b=q.getBoundingClientRect();if(!b.width){rights.push(rights.length?rights[rights.length-1]:b.right);continue}rights.push(b.right);top=Math.min(top,b.top);bot=Math.max(bot,b.bottom);if(left===null)left=b.left}}o.chars={rights,left,top,bot};` : ''}
+              ${s.chars ? `const t=e.matches('[data-type]')?e:(e.querySelector('[data-type]')||e);const w=document.createTreeWalker(t,NodeFilter.SHOW_TEXT);const rights=[],lefts=[],mids=[],lines=[],ln=[];let top=1e9,bot=0,left=null;for(let n;(n=w.nextNode());){for(let i=0;i<n.data.length;i++){const q=document.createRange();q.setStart(n,i);q.setEnd(n,i+1);const b=q.getBoundingClientRect();if(!b.width){const pr=rights.length?rights[rights.length-1]:b.right;rights.push(pr);lefts.push(pr);ln.push(Math.max(0,lines.length-1));continue}rights.push(b.right);lefts.push(b.left);top=Math.min(top,b.top);bot=Math.max(bot,b.bottom);if(left===null)left=b.left;const mid=(b.top+b.bottom)/2,L=lines[lines.length-1];if(L&&mid<=L.b){L.t=Math.min(L.t,b.top);L.b=Math.max(L.b,b.bottom)}else lines.push({t:b.top,b:b.bottom,i0:rights.length-1});ln.push(lines.length-1)}}o.chars={rights,lefts,ln,lines,left,top,bot};` : ''}
               return o})()`,
           });
           const b = r.result.value;
@@ -562,9 +570,9 @@ const captureJobs = async (jobs) => {
           if (x1 <= x0 || y1 <= y0) fail(`captured piece "${s.id}" is off screen`);
           const shot = await page.call('Page.captureScreenshot', { format: 'png', optimizeForSpeed: true, fromSurface: true, clip: { x: x0, y: y0, width: x1 - x0, height: y1 - y0, scale: 1 } });
           stillFiles.push(Buffer.from(shot.data, 'base64'));
-          if (flags['dump-stills']) { fs.mkdirSync(flags['dump-stills'], { recursive: true }); fs.writeFileSync(path.join(flags['dump-stills'], `${stillFiles.length - 1}.png`), stillFiles[stillFiles.length - 1]); fs.appendFileSync(path.join(flags['dump-stills'], 'index.txt'), `${stillFiles.length - 1} ${id}\n`); }
-          const ch = b.chars && b.chars.rights.length ? { cx: b.chars.rights.map((v) => v - x0), cl: b.chars.left - x0, cy0: b.chars.top - y0, cy1: b.chars.bot - y0 } : {};
-          stills[id] = { file: `/still/${stillFiles.length - 1}.png`, x: x0, y: y0, w: x1 - x0, h: y1 - y0, bx: b.l, by: b.t, bw: b.r - b.l, bh: b.b - b.t, ...ch, ...extra };
+          if (flags['dump-stills']) { fs.mkdirSync(flags['dump-stills'], { recursive: true }); const n = `${id.replace(/[^A-Za-z0-9._@-]+/g, '_').slice(0, 80)}-${createHash('sha1').update(id).digest('hex').slice(0, 6)}`; fs.writeFileSync(path.join(flags['dump-stills'], `${n}.png`), stillFiles[stillFiles.length - 1]); fs.appendFileSync(path.join(flags['dump-stills'], 'index.txt'), `${n}.png ${id}\n`); }
+          const ch = b.chars && b.chars.rights.length ? { cx: b.chars.rights.map((v) => v - x0), cl: b.chars.left - x0, cy0: b.chars.top - y0, cy1: b.chars.bot - y0, ln: b.chars.ln, lines: b.chars.lines.map((l) => ({ t: l.t - y0, b: l.b - y0, i0: l.i0 })) } : {};
+          stills[id] = { file: `/still/${stillFiles.length - 1}.png`, x: x0, y: y0, w: x1 - x0, h: y1 - y0, bx: b.l, by: b.t, bw: b.r - b.l, bh: b.b - b.t, ...ch, ...(s.meta ? { meta: s.meta } : {}), ...extra };
         };
         if (s.poses?.length) {
           for (let k = 0; k < s.poses.length; k++) {
