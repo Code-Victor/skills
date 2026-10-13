@@ -373,7 +373,11 @@ const mouse = async (type, x, y) => {
       expression: `window.__cap_cursor_api ? __cap_cursor_api.${call}(${x}, ${y}) : null`, returnByValue: true,
     }).catch(() => null);
     if (typeof r?.result?.value === 'string') shape = r.result.value;
-    path.push({ wall: Date.now() / 1000, x, y, shape, pressed });
+    // About 60 samples a second is plenty for drawing it again later.
+    const now = Date.now() / 1000;
+    const prev = path.at(-1);
+    if (!prev || type !== 'mouseMoved' || shape !== prev.shape || (now - prev.wall) / SLOW >= 0.0155)
+      path.push({ wall: now, x, y, shape, pressed });
   }
   await send('Input.dispatchMouseEvent', {
     type, x, y,
@@ -413,20 +417,25 @@ const resolvePoint = async (p) => {
   return [p.x, p.y];
 };
 
+const STEP_MS = 8;
 const moveTo = async ([x, y], sec) => {
   const [x0, y0] = pos;
   if (rehearse) {
     pos = [x, y];
     return mouse('mouseMoved', x, y);
   }
-  const n = Math.max(1, Math.round((sec * 1000) / 16));
+  // A step every STEP_MS of page time, twice per output frame, so a step lands
+  // in every 1/60 s slot even when one runs late. The glide follows the clock,
+  // not a step count: a slow round trip costs a frame, never length.
   const w0 = Date.now() / 1000;
   const t0 = pageNow();
-  for (let i = 1; i <= n; i++) {
-    const k = ease(i / n);
+  for (;;) {
+    const e = (pageNow() - t0) / sec;
+    const k = ease(Math.min(1, e));
     pos = [x0 + (x - x0) * k, y0 + (y - y0) * k];
     await mouse('mouseMoved', ...pos);
-    await pageUntil(t0 + (i * 0.016));
+    if (e >= 1) break;
+    await pageUntil(t0 + (Math.floor(((pageNow() - t0) * 1000) / STEP_MS) + 1) * STEP_MS / 1000);
   }
   motion.push([w0, Date.now() / 1000]);
 };
@@ -444,7 +453,6 @@ const typeText = async (text, cps = 14) => {
   const box = await ask('focused');
   if (!box) warn(`type "${text.slice(0, 20)}": nothing has focus, so the text goes nowhere (click the field first)`);
   log('type-start', { box, text });
-  const w0 = Date.now() / 1000;
   let due = pageNow();
   for (const [i, ch] of [...text].entries()) {
     await send('Input.insertText', { text: ch });
@@ -452,7 +460,6 @@ const typeText = async (text, cps = 14) => {
     due += (1 / cps) * jitter * (ch === ' ' ? 1.6 : 1);
     await pageUntil(due);
   }
-  motion.push([w0, Date.now() / 1000]);
   log('type-end', { box });
 };
 
@@ -509,12 +516,17 @@ const runSteps = async () => {
       }
       if (s.scroll) {
         log('scroll', { x: pos[0], y: pos[1], dy: s.scroll });
-        const n = rehearse ? 1 : Math.max(1, Math.round(((s.dur ?? 0.8) * 1000) / 16));
         const w0 = Date.now() / 1000;
         const t0 = pageNow();
-        for (let k = 0; k < n; k++) {
-          await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: pos[0], y: pos[1], deltaX: 0, deltaY: s.scroll / n });
-          if (!rehearse) await pageUntil(t0 + (k + 1) * 0.016);
+        const dur = s.dur ?? 0.8;
+        let sent = 0;
+        for (;;) {
+          const f = rehearse ? 1 : Math.min(1, (pageNow() - t0) / dur);
+          const dy = s.scroll * f - sent;
+          sent += dy;
+          await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: pos[0], y: pos[1], deltaX: 0, deltaY: dy });
+          if (f >= 1) break;
+          await pageUntil(t0 + (Math.floor(((pageNow() - t0) * 1000) / STEP_MS) + 1) * STEP_MS / 1000);
         }
         if (!rehearse) motion.push([w0, Date.now() / 1000]);
       }
@@ -687,10 +699,12 @@ const measureRate = async () => {
   await evaluate(`(() => {
     const d = document.createElement('div');
     d.id = '__cap_probe';
-    d.style.cssText = 'position:fixed;left:0;bottom:0;width:6px;height:6px;background:#888;z-index:2147483640;pointer-events:none';
+    // Full-viewport and re-tinted every frame: the whole frame is repainted
+    // and re-encoded, like the busiest moment of a take.
+    d.style.cssText = 'position:fixed;inset:0;z-index:2147483640;pointer-events:none';
     (document.body || document.documentElement).appendChild(d);
     let k = 0;
-    const tick = () => { d.style.translate = (k++ % 40) + 'px 0'; requestAnimationFrame(tick); };
+    const tick = () => { d.style.background = 'rgba(128,128,128,' + (k++ % 2 ? 0.02 : 0.04) + ')'; requestAnimationFrame(tick); };
     tick();
   })()`);
   const savedSlow = SLOW;
@@ -811,6 +825,7 @@ for (let attempt = 1; ; attempt++) {
     continue;
   }
   const toVideo = (wall) => Math.max(0, (wall - take.t0) / SLOW);
+  if (process.env.CAP_DEBUG) writeFileSync(process.env.CAP_DEBUG, JSON.stringify({ times: take.times, motion: motion.map(([s, e]) => [toVideo(s), toVideo(e)]) }));
   take.fpsDistinct = distinctFps(take.times, motion.map(([s, e]) => [toVideo(s), toVideo(e)]));
   // Never hand back a choppy clip silently.
   if (take.fpsDistinct !== null && take.fpsDistinct < 50 && AUTO && !retriedSlower) {

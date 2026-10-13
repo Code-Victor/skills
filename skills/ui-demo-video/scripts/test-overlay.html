@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Overlay test</title>
+<style>
+body{margin:0;font:16px system-ui;background:#fff;color:#111;height:100vh}
+h1{padding:24px}
+#tick{position:fixed;left:40%;top:40%;width:80px;height:80px;background:#3b6bff}
+</style></head><body>
+<h1>Overlay test page</h1><p style="padding:0 24px">Every magenta box below must be hidden in a recording.</p>
+<div id="tick"></div>
+<script>
+// Reproduces the shapes that kept dev overlays visible in past takes. Each
+// overlay is solid magenta so a frame can be checked by colour.
+const BOX = 'position:fixed;width:140px;height:44px;background:#ff00ff;color:#fff;z-index:99999;';
+
+// 1. Next.js dev "Issues" badge: a shadow root under <nextjs-portal>,
+//    mounted late, and mounted again after "hydration".
+const mountPortal = () => {
+  document.querySelectorAll('nextjs-portal').forEach((n) => n.remove());
+  const host = document.createElement('nextjs-portal');
+  const root = host.attachShadow({ mode: 'open' });
+  root.innerHTML = '<div data-nextjs-dev-tools-button style="' + BOX + 'left:16px;bottom:16px">Issues 1</div>';
+  document.body.append(host);
+};
+setTimeout(mountPortal, 300);
+// 2. "Hydration": the framework rewrites <head> and its own sheets, then
+//    remounts the overlay.
+setTimeout(() => {
+  document.head.querySelectorAll('style').forEach((s) => { if (s.id) s.remove(); });
+  try { document.adoptedStyleSheets = []; } catch {}
+  mountPortal();
+}, 1000);
+// 3. Agentation-like toolbar, a plain fixed element, mounted late.
+setTimeout(() => {
+  const d = document.createElement('div');
+  d.setAttribute('data-feedback-toolbar', '');
+  d.style.cssText = BOX + 'right:16px;bottom:16px';
+  d.textContent = 'Agentation';
+  document.body.append(d);
+}, 500);
+// 4. A host that is in no list, with a closed shadow root: only the rule
+//    applied inside shadow roots can hide what is in it.
+setTimeout(() => {
+  const host = document.createElement('x-dev-widget');
+  const root = host.attachShadow({ mode: 'closed' });
+  root.innerHTML = '<div data-nextjs-dev-tools-button style="' + BOX + 'left:40%;bottom:16px">Closed root</div>';
+  document.body.append(host);
+}, 700);
+// Keep the screen changing so the screencast keeps delivering frames.
+const t = document.getElementById('tick');
+(function loop() { t.style.translate = (Math.sin(performance.now() / 300) * 120) + 'px 0'; requestAnimationFrame(loop); })();
+</script></body></html>

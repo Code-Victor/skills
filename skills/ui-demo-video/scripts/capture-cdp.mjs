@@ -106,7 +106,7 @@ export async function openTab(port, { width, height } = {}) {
 export async function otherPages(port, ownId) {
   try {
     const list = await (await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(2000) })).json();
-    return list.filter((t) => t.type === 'page' && t.id !== ownId && t.url !== 'about:blank' && !/^devtools:/.test(t.url));
+    return list.filter((t) => t.type === 'page' && t.id !== ownId && t.url !== 'about:blank' && !/^(devtools|chrome|chrome-untrusted):/.test(t.url));
   } catch {
     return [];
   }
