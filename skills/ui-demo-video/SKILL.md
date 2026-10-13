@@ -200,8 +200,8 @@ What a recording gives you:
   `capture` for all takes) pin a size instead.
 - True 60 fps: the page clock is slowed just enough for Chrome to paint
   every frame, and the frames are re-timed to real speed. Expect a take to
-  cost two to three times its length. The summary warns when one came out
-  choppy.
+  cost about three times its length. A take whose cursor came out jerky is
+  recorded once more, slower, and the summary says so.
 - A cursor that becomes a hand over links and buttons and an I-beam over
   text, with a soft ripple where it clicks, and typing at a human pace that
   is the same on every take.
