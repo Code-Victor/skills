@@ -7,7 +7,7 @@
 #   scripts/chrome.sh --login [url]      # the one time a window appears: log in
 #   scripts/chrome.sh                    # ...then this hands the session back
 #   scripts/chrome.sh --window           # fallback for apps that refuse headless
-#   scripts/chrome.sh --stop | --status
+#   scripts/chrome.sh --stop | --status   # --stop leaves a Chrome it did not start alone (--force overrides)
 #   PORT=9223 PROFILE=~/my-profile SCALE=3 scripts/chrome.sh
 #
 # --login stops the headless Chrome on the profile, opens a normal window on
@@ -39,10 +39,16 @@ SCALE="${SCALE:-2}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 STATE="${XDG_CACHE_HOME:-$HOME/.cache}/ui-demo-video"
 MODEFILE="$STATE/chrome-$PORT.mode"
-COOKIES="$STATE/cookies-$PORT.json"
+PIDFILE="$STATE/chrome-$PORT.pid"
+# Keyed by profile as well as port: a file left for one profile is never
+# restored into another.
+PKEY="$(printf '%s' "$PROFILE" | cksum | cut -d' ' -f1)"
+COOKIES="$STATE/cookies-$PORT-$PKEY.json"
 mkdir -p "$PROFILE" "$STATE"
+# Session cookies are secrets: whatever happens, the file does not outlive the run.
+trap 'rm -f "$COOKIES"' EXIT
 
-want=headless; explicit=0; url=""
+want=headless; explicit=0; force=0; url=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --headless) want=headless; explicit=1 ;;
@@ -50,14 +56,22 @@ while [[ $# -gt 0 ]]; do
     --login) want=login; if [[ "${2:-}" && "${2:-}" != --* ]]; then url="$2"; shift; fi ;;
     --stop) want=stop ;;
     --status) want=status ;;
-    *) echo "usage: chrome.sh [--headless | --window | --login [url] | --stop | --status]" >&2; exit 2 ;;
+    --force) force=1 ;;
+    *) echo "usage: chrome.sh [--headless | --window | --login [url] | --stop [--force] | --status]" >&2; exit 2 ;;
   esac
   shift
 done
 
 is_up() { curl -sf --max-time 2 "http://127.0.0.1:$PORT/json/version" >/dev/null; }
 current_mode() { if is_up; then cat "$MODEFILE" 2>/dev/null || echo external; else echo stopped; fi; }
-chrome_pid() { lsof -ti "tcp:$PORT" -sTCP:LISTEN 2>/dev/null | head -1 || true; }
+# The pid recorded at launch (if it is still this port's Chrome), else whatever
+# listens on the port (needs lsof, which not every Linux has).
+chrome_pid() {
+  local p
+  p="$(cat "$PIDFILE" 2>/dev/null || true)"
+  if [[ -n "$p" ]] && ps -p "$p" -o command= 2>/dev/null | grep -q -- "--remote-debugging-port=$PORT"; then echo "$p"; return; fi
+  if command -v lsof >/dev/null; then lsof -ti "tcp:$PORT" -sTCP:LISTEN 2>/dev/null | head -1 || true; fi
+}
 
 find_chrome() {
   CHROME="${CHROME_PATH:-}"
@@ -114,27 +128,31 @@ launch() { # launch <mode> [url]
       local front=""
       if [[ "$(uname)" == Darwin ]]; then front="$(lsappinfo info -only name "$(lsappinfo front)" 2>/dev/null | sed -n 's/.*"LSDisplayName"="\(.*\)".*/\1/p' || true)"; fi
       "$CHROME" "${COMMON[@]}" --window-size=1500,1000 --force-device-scale-factor="$SCALE" >/dev/null 2>&1 &
-      wait_up
-      # Chrome raised itself at launch; give the screen back.
-      if [[ -n "$front" ]]; then osascript -e "tell application \"$front\" to activate" >/dev/null 2>&1 || true; fi
       ;;
     login)
       "$CHROME" "${COMMON[@]}" --window-size=1500,1000 ${u:+"$u"} >/dev/null 2>&1 &
       ;;
   esac
-  wait_up
+  # Written before the wait: a Chrome that is slow to open its port is still
+  # ours, not an "external" one.
+  echo "$!" > "$PIDFILE"
   echo "$m" > "$MODEFILE"
+  wait_up
+  # Chrome raised itself at launch; give the screen back.
+  if [[ "$m" == window && -n "${front:-}" ]]; then osascript -e "tell application \"$front\" to activate" >/dev/null 2>&1 || true; fi
 }
 
 stop_chrome() {
   local pid; pid="$(chrome_pid)"
-  [[ -z "$pid" ]] && return 0
-  kill -TERM "$pid" 2>/dev/null || true
-  for _ in $(seq 1 75); do kill -0 "$pid" 2>/dev/null || break; sleep 0.2; done
-  if kill -0 "$pid" 2>/dev/null; then kill -KILL "$pid" 2>/dev/null || true; sleep 0.5; fi
-  # Let the profile lock go.
-  for _ in $(seq 1 25); do [[ -e "$PROFILE/SingletonLock" ]] || break; sleep 0.2; done
-  rm -f "$MODEFILE"
+  if [[ -n "$pid" ]]; then
+    kill -TERM "$pid" 2>/dev/null || true
+    for _ in $(seq 1 75); do kill -0 "$pid" 2>/dev/null || break; sleep 0.2; done
+    if kill -0 "$pid" 2>/dev/null; then kill -KILL "$pid" 2>/dev/null || true; sleep 0.5; fi
+  fi
+  # Let the profile lock go. SingletonLock is a symlink to "host-pid" that
+  # dangles, so -e is always false: test the link itself.
+  for _ in $(seq 1 25); do [[ -L "$PROFILE/SingletonLock" || -e "$PROFILE/SingletonLock" ]] || break; sleep 0.2; done
+  rm -f "$MODEFILE" "$PIDFILE"
 }
 
 case "$want" in
@@ -144,6 +162,11 @@ case "$want" in
     echo "$m on port $PORT (profile: $PROFILE, pid $(chrome_pid))"
     exit 0 ;;
   stop)
+    m="$(current_mode)"
+    if [[ "$m" == external && "$force" != 1 ]]; then
+      echo "Chrome on port $PORT was not started by chrome.sh, so --stop leaves it alone (add --force to stop it anyway)." >&2
+      exit 1
+    fi
     stop_chrome
     echo "stopped (port $PORT)"
     exit 0 ;;
@@ -165,15 +188,22 @@ if [[ "$cur" == window && "$want" == headless && "$explicit" == 0 ]]; then
   exit 0
 fi
 
+swapped=0
 if [[ "$cur" != stopped ]]; then
   # Swap modes on the same profile, taking the login with us.
-  node "$HERE/chrome-session.mjs" save "$PORT" "$COOKIES" >/dev/null 2>&1 || rm -f "$COOKIES"
+  if node "$HERE/chrome-session.mjs" save "$PORT" "$COOKIES" >/dev/null 2>&1; then swapped=1; else rm -f "$COOKIES"; fi
   stop_chrome
+elif [[ -f "$MODEFILE" ]]; then
+  # The mode file outlived its Chrome: the person closed the login window.
+  if [[ "$(cat "$MODEFILE")" != headless ]]; then
+    echo "The $(cat "$MODEFILE") Chrome was already closed, so session cookies that only lived in that window are gone; you may need to log in again."
+  fi
+  rm -f "$MODEFILE" "$PIDFILE"
 fi
 launch "$want" "$url"
-if [[ -s "$COOKIES" ]]; then
-  node "$HERE/chrome-session.mjs" restore "$PORT" "$COOKIES" >/dev/null 2>&1 \
-    || echo "Could not restore cookies; kept in $COOKIES" >&2
+# Only straight after a swap this very run: never a file left from earlier.
+if [[ "$swapped" == 1 && -s "$COOKIES" ]]; then
+  node "$HERE/chrome-session.mjs" restore "$PORT" "$COOKIES" 2>&1 | tail -1 || echo "Could not restore the session cookies." >&2
 fi
 case "$want" in
   login) echo "Chrome window open on port $PORT${url:+ at $url}: log in there, then run scripts/chrome.sh to go back to background mode." ;;

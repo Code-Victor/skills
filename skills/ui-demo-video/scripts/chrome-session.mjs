@@ -46,8 +46,18 @@ if (cmd === 'save') {
     if (!c.session && c.expires > 0) p.expires = c.expires; // session cookies stay without one
     return p;
   });
-  await call('Storage.setCookies', { cookies });
+  let set = cookies.length;
+  try {
+    await call('Storage.setCookies', { cookies });
+  } catch {
+    // One bad cookie fails the whole batch; set them one by one and count.
+    set = 0;
+    for (const c of cookies) {
+      try { await call('Storage.setCookies', { cookies: [c] }); set++; } catch {}
+    }
+  }
   rmSync(file, { force: true });
-  console.log(`restored ${cookies.length} cookies`);
+  const dropped = cookies.length - set;
+  console.log(dropped ? `restored ${set} of ${cookies.length} cookies (${dropped} dropped)` : `restored ${set} cookies`);
 }
 ws.close();
