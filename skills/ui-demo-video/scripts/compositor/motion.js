@@ -117,7 +117,45 @@ export const spring = ({ frame, fps, config = {}, durationInFrames }) => {
 // ---------------------------------------------------------------- camera
 // scenes.tsx: moves eases in and out; "holding" is two equal keyframes.
 const CAMERA_EASE = bezier(0.65, 0, 0.35, 1);
-export const cameraAt = (moves, frame, fps) => {
+
+/**
+ * The easing of one camera move, from the style's `camera.ease` token:
+ * { type: 'bezier', curve: [x1, y1, x2, y2] } or { type: 'spring', stiffness, damping, mass }.
+ * A spring ease is the step response of that spring, stretched so it has settled
+ * exactly when the move's time is up (the keyframe's atSec stays "arrive by").
+ * Overdamped springs (e.g. 320 / 40 / 0.92, the open-source editors' camera) ease
+ * out without overshoot; underdamped ones overshoot a little (the pan stays clamped).
+ */
+const easeCache = new Map();
+export const makeCameraEase = (tok) => {
+  if (!tok || tok.type !== 'spring') return tok?.curve ? bezier(...tok.curve) : CAMERA_EASE;
+  const { stiffness = 320, damping = 40, mass = 0.92 } = tok, key = `${stiffness}/${damping}/${mass}`;
+  if (easeCache.has(key)) return easeCache.get(key);
+  const w0 = Math.sqrt(stiffness / mass), z = damping / (2 * Math.sqrt(stiffness * mass));
+  const step = (t) => {                     // unit step response, x(0) = 0, x(inf) = 1
+    if (z < 1) { const wd = w0 * Math.sqrt(1 - z * z); return 1 - Math.exp(-z * w0 * t) * (Math.cos(wd * t) + (z * w0 / wd) * Math.sin(wd * t)); }
+    if (z === 1) return 1 - Math.exp(-w0 * t) * (1 + w0 * t);
+    const s = Math.sqrt(z * z - 1), r1 = -w0 * (z - s), r2 = -w0 * (z + s);
+    return 1 - (r2 * Math.exp(r1 * t) - r1 * Math.exp(r2 * t)) / (r2 - r1);
+  };
+  let T = 0.05;
+  while (T < 10 && Math.abs(1 - step(T)) > 0.002) T += 1 / 240;
+  const end = step(T);
+  const f = (u) => (u <= 0 ? 0 : u >= 1 ? 1 : step(u * T) / end);
+  easeCache.set(key, f);
+  return f;
+};
+
+// ---------------------------------------------------------------- seeded noise
+// Deterministic "random": the same seed and keys always give the same number
+// (the paper style's per-pose jitter). Never Math.random.
+export const seeded = (seed, ...keys) => {
+  let h = (seed >>> 0) ^ 0x9e3779b9;
+  for (const k of keys) { h = Math.imul(h ^ (Number(k) | 0), 0x85ebca6b); h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35); h ^= h >>> 16; }
+  return () => { h = (h + 0x6d2b79f5) | 0; let t = Math.imul(h ^ (h >>> 15), 1 | h); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+};
+
+export const cameraAt = (moves, frame, fps, ease = CAMERA_EASE) => {
   const keys = [...(moves ?? [])].sort((a, b) => a.atSec - b.atSec);
   const at = (k) => ({ x: k.x ?? 0.5, y: k.y ?? 0.5, zoom: k.zoom ?? 1 });
   if (keys.length === 0) return { x: 0.5, y: 0.5, zoom: 1 };
@@ -126,7 +164,7 @@ export const cameraAt = (moves, frame, fps) => {
   for (let i = 1; i < keys.length; i++) {
     if (t <= keys[i].atSec) {
       const a = at(keys[i - 1]), b = at(keys[i]);
-      const k = CAMERA_EASE((t - keys[i - 1].atSec) / Math.max(0.001, keys[i].atSec - keys[i - 1].atSec));
+      const k = ease((t - keys[i - 1].atSec) / Math.max(0.001, keys[i].atSec - keys[i - 1].atSec));
       return { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k, zoom: a.zoom + (b.zoom - a.zoom) * k };
     }
   }

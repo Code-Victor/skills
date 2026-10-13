@@ -223,11 +223,21 @@ export type Transition =
   | TransitionName
   | { type: TransitionName; sec?: number; direction?: "left" | "right" | "up" | "down" };
 
+/**
+ * The look of the fast renderer (scripts/compose.mjs): a style name such as
+ * "studio" (the default, today's look) or "midnight", or { preset, overrides }
+ * with token overrides (see scripts/compositor/styles/README.md). The Remotion
+ * template ignores this key and always renders the studio look.
+ */
+export type StyleChoice = string | { preset?: string; overrides?: Record<string, unknown> };
+
 export type VideoSpec = {
   width: number;
   height: number;
   fps: number;
   theme: Theme;
+  /** Optional. Only the compose.mjs renderer reads it; Remotion renders the base look. */
+  style?: StyleChoice;
   /** Used between scenes unless a scene pair overrides it. */
   transition: Transition;
   /**

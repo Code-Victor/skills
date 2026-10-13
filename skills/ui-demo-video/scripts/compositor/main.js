@@ -9,6 +9,7 @@ import { GL } from './gl.js';
 import { ClipSource, dropFile } from './decode.js';
 import { Scenes } from './scenes.js';
 import { activeScenes, sceneSpans } from './timeline.js';
+import { setStyleHash } from './layout.js';
 
 const now = () => performance.now();
 const post = (path, body, headers = {}) => fetch(path, { method: 'POST', body, headers });
@@ -18,7 +19,9 @@ const LEAD = 50;   // open a scene's decoder this many frames before it starts
 
 async function run() {
   const m = await (await fetch('/manifest.json')).json();
-  const { W, H, fps, spec } = m;
+  const { W, H, fps, spec, style } = m;
+  setStyleHash(style.hash);
+  spec.style = style;   // timeline.js reads the style's own transitions from the spec
   const FRAME_US = 1e6 / fps;
   const spans = sceneSpans(spec, fps);
   const N = m.frames;
@@ -41,7 +44,7 @@ async function run() {
     const bmp = await createImageBitmap(blob, { premultiplyAlpha: 'premultiply' });
     images.set(i, gl.still(bmp)); bmp.close();
   }));
-  const scenes = new Scenes({ gl, spec, fps, W, H, stills, images });
+  const scenes = new Scenes({ gl, spec, style, fps, W, H, stills, images });
 
   // ---- encoder ----
   const still = m.mode === 'still';
@@ -110,6 +113,21 @@ async function run() {
     r.src = {};
   };
 
+  const clipIdx = spec.scenes.map((_, k) => k).filter((k) => Object.keys(needs(spec.scenes[k])).length);
+  const ambientFor = async (i, n, frames) => {
+    const own = frames[i].main ?? frames[i].before;
+    if (own) return own;
+    const prev = clipIdx.filter((k) => k < i).pop();
+    const firstKey = (k) => Object.keys(needs(spec.scenes[k]))[0];
+    if (prev !== undefined && rt[prev].tex[firstKey(prev)]?.last) return rt[prev].tex[firstKey(prev)];   // hold the clip before: its last frame
+    const next = clipIdx.find((k) => k > i);
+    if (next === undefined) return undefined;
+    await openScene(next, n);                                                                             // else the clip after: its first frame
+    const key = firstKey(next), tex = rt[next].tex[key];
+    if (!tex.last) gl.video(tex, await rt[next].src[key].get(needs(spec.scenes[next])[key].trim * 1e6));
+    return tex;
+  };
+
   // ---- frame loop ----
   const first = still ? m.stillFrame : 0, last = still ? m.stillFrame + 1 : N;
   const t0 = now();
@@ -132,10 +150,12 @@ async function run() {
         frames[a.i][key] = rt[a.i].tex[key];
       }));
     }));
+    // ambient background: every active scene needs a recording frame to take its colours from (its own, or the nearest clip's)
+    if (style.canvas.background.kind === 'ambient') await Promise.all(active.map(async (a) => { frames[a.i].ambient = await ambientFor(a.i, n, frames); }));
     st.decode += now() - t;
 
     t = now();
-    scenes.frame(active, frames, null);
+    scenes.frame(active, frames, n);
     scenes.logo(n);
     st.draw += now() - t;
 

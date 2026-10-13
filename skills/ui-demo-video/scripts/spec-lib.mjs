@@ -49,8 +49,10 @@ export const SCENE_KEYS = {
   image: [...COMMON, ...CLIPLIKE, 'type', 'moves'],
   list: [...COMMON, 'type', 'title', 'items', 'subtitle'],
 };
-export const TOP_KEYS = ['width', 'height', 'fps', 'theme', 'transition', 'transitionSec', 'transitions', 'scenes', 'music'];
+export const TOP_KEYS = ['width', 'height', 'fps', 'theme', 'style', 'transition', 'transitionSec', 'transitions', 'scenes', 'music'];
 export const DEMO_KEYS = ['name', 'url', 'capture', 'takes'];
+// "style" is a name ("midnight") or { preset, overrides }; the names live in compositor/styles/.
+export const STYLE_KEYS = ['preset', 'overrides'];
 export const THEME_KEYS = ['background', 'foreground', 'accent', 'tagColors', 'logo'];
 // Keys beginning with one of these are free notes for the author.
 export const isNote = (k) => k.startsWith('_') || k.startsWith('$') || k === 'comment' || k === 'notes';

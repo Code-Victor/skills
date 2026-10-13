@@ -22,8 +22,9 @@ import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
   DEMO_KEYS, KNOWN_TRANSITIONS, SAFE_NAME, SCENE_KEYS, STEP_KEYS, TAKE_KEYS, THEME_KEYS, TOP_KEYS,
-  gapSec, isNote, resolveSpec, sceneSpans, takesUsed,
+  gapSec, isNote, resolveSpec, sceneSpans, takesUsed, STYLE_KEYS,
 } from './spec-lib.mjs';
+import { STYLES, TOKEN_GROUPS, flatten, styleNames, unknownStyleMessage } from './compositor/styles/index.js';
 
 // Reading speed: 20 characters a second is the ceiling Netflix sets for adult
 // subtitles (15 to 17 reads comfortably); anything needs about 1.5 s.
@@ -80,6 +81,21 @@ function checkSpecInner(spec, { pub = '.', files = true, demo = false } = {}) {
 
   unknown(spec, demo ? [...TOP_KEYS, ...DEMO_KEYS] : TOP_KEYS, 'spec', out, demo ? 'errors' : 'warnings');
   unknown(spec.theme, THEME_KEYS, 'theme', out, demo ? 'errors' : 'warnings');
+  // The look: "style": "midnight" or { "preset": "midnight", "overrides": { "post": { "grain": 0.02 } } }
+  let styleTransitions = [];
+  if (spec.style !== undefined) {
+    const st = spec.style, name = typeof st === 'string' ? st : isObj(st) ? (st.preset ?? 'studio') : null;
+    if (name === null) errors.push('style: a name like "midnight" or { "preset": "midnight", "overrides": { ... } }');
+    else if (!STYLES[name]) errors.push(`style: ${unknownStyleMessage(name)}`);
+    else {
+      if (isObj(st)) {
+        unknown(st, STYLE_KEYS, 'style', out);
+        if (st.overrides !== undefined && !isObj(st.overrides)) errors.push('style.overrides must be an object of tokens, e.g. { "post": { "grain": 0.02 } }');
+        else unknown(st.overrides, TOKEN_GROUPS, 'style.overrides', out, 'warnings');
+      }
+      styleTransitions = Object.keys(flatten(name).transition?.custom ?? {});
+    }
+  }
   if (!Array.isArray(spec.scenes) || !spec.scenes.length) {
     errors.push('spec has no scenes');
     return { ...out, totalSec: 0, scenes: 0 };
@@ -93,7 +109,7 @@ function checkSpecInner(spec, { pub = '.', files = true, demo = false } = {}) {
   const okTransition = (t, at) => {
     const o = typeof t === 'string' ? { type: t } : t;
     if (!isObj(o) || typeof o.type !== 'string') { errors.push(`${at}: a transition is a name like "fade" or { "type": "fade", "sec": 0.5 }`); return false; }
-    if (!KNOWN_TRANSITIONS.has(o.type)) { errors.push(`${at}: unknown transition "${o.type}"`); return false; }
+    if (!KNOWN_TRANSITIONS.has(o.type) && !styleTransitions.includes(o.type)) { errors.push(`${at}: unknown transition "${o.type}"`); return false; }
     if ('sec' in o && !(typeof o.sec === 'number' && o.sec >= 0)) { errors.push(`${at}: transition sec must be a number of seconds`); return false; }
     return true;
   };

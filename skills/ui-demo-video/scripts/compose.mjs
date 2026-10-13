@@ -10,6 +10,7 @@
 //   --bitrate 24M        target H.264 bitrate (default 24M; the encoder is variable-rate)
 //   --software           encode in software (slower; also what happens when no GPU encoder exists)
 //   --proxy              transcode every clip to a compositor-friendly proxy first (testing)
+//   --style <name>       the visual style (overrides the spec's "style"); --list-styles shows them
 //   --json               print one line of JSON instead of the human summary
 //
 // How it works. Text, cards, captions and window shadows are real HTML/CSS:
@@ -30,6 +31,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { jobsFor, baseCss } from './compositor/plan.js';
+import { listStyles, resolveStyle, colorStrings, serialisable } from './compositor/styles/index.js';
+import { parseColor } from './compositor/color.js';
+import { setStyleHash } from './compositor/layout.js';
 import { NATURAL_SEC, TRANSITIONS, resolveGap, sceneSpans, totalFrames } from './compositor/timeline.js';
 
 const T0 = Date.now();
@@ -45,7 +49,7 @@ for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
   if (!a.startsWith('--')) { positional.push(a); continue; }
   const k = a.slice(2);
-  if (['software', 'json', 'proxy', 'verbose'].includes(k)) flags[k] = true;
+  if (['software', 'json', 'proxy', 'verbose', 'list-styles'].includes(k)) flags[k] = true;
   else flags[k] = argv[++i];
 }
 const JSON_OUT = !!flags.json;
@@ -56,8 +60,14 @@ const warn = (msg) => { warnings.push(msg); note(`warning: ${msg}`); };
 class Failed extends Error {}
 const fail = (msg) => { throw new Failed(msg); };
 
+if (flags['list-styles']) {
+  const list = listStyles();
+  if (JSON_OUT) console.log(JSON.stringify(list));
+  else for (const s of list) console.log(`${s.name.padEnd(10)} ${s.description}\n${''.padEnd(10)} suits: ${s.suits}`);
+  process.exit(0);
+}
 if (!positional[0] || (!flags.out && flags.still === undefined) || flags.help) {
-  console.error('usage: compose.mjs <video.json> --out <file.mp4> [--clips dir] [--sheet png] [--still sec --still-out png] [--bitrate 24M] [--software] [--json]');
+  console.error('usage: compose.mjs <video.json> --out <file.mp4> [--clips dir] [--sheet png] [--still sec --still-out png] [--style name] [--list-styles] [--bitrate 24M] [--software] [--json]');
   process.exit(2);
 }
 const parseBitrate = (s = '24M') => {
@@ -132,8 +142,17 @@ try { spec = JSON.parse(fs.readFileSync(specPath, 'utf8')); } catch (e) { fail(`
 const clipsDir = path.resolve(flags.clips ?? path.dirname(specPath));
 spec.width ??= 1920; spec.height ??= 1080; spec.fps ??= 60;
 spec.theme ??= {};
-spec.theme.background ??= '#ffffff'; spec.theme.foreground ??= '#111114';
-spec.transition ??= 'zoom-blur'; spec.transitionSec ??= 0.45;
+// The style comes first: it supplies the palette, transition and look the theme and spec then override.
+let style;
+try { style = resolveStyle(spec, flags.style); } catch (e) { fail(e.message); }
+if (style.name !== 'studio') {   // demo.mjs writes the authoring defaults into every spec; for a style they mean "not set"
+  if (spec.transition === undefined || spec.transition === 'zoom-blur') spec.transition = style.transition.default;
+  if (spec.transitionSec === undefined || spec.transitionSec === 0.5 || spec.transitionSec === 0.45) spec.transitionSec = style.transition.sec;
+}
+spec.theme.background ??= style.palette.background; spec.theme.foreground ??= style.palette.foreground;
+spec.transition ??= style.transition.default; spec.transitionSec ??= style.transition.sec;
+spec.style = style;   // timeline.js and the page read the resolved style from the spec
+setStyleHash(style.hash);
 if (!Array.isArray(spec.scenes) || !spec.scenes.length) fail('video.json has no scenes');
 const KNOWN = ['clip', 'image', 'split', 'title', 'issue', 'list'];
 spec.scenes.forEach((s, i) => { if (!KNOWN.includes(s.type)) fail(`scene ${i}: unknown scene type "${s.type}" (expected one of ${KNOWN.join(', ')})`); });
@@ -143,7 +162,8 @@ for (const sc of spec.scenes) {
   if (sc.type === 'list') sc.items = (sc.items ?? []).filter(filled);
   if (sc.type === 'clip' && sc.captions) sc.captions = sc.captions.filter((c) => filled(c?.text));
 }
-const checkTransition = (t, where) => { const type = typeof t === 'string' ? t : t?.type; if (!TRANSITIONS.includes(type)) fail(`${where}: unknown transition "${type}" (expected one of ${TRANSITIONS.join(', ')})`); };
+const ALL_TRANSITIONS = [...TRANSITIONS, ...Object.keys(style.transition.custom ?? {})];
+const checkTransition = (t, where) => { const type = typeof t === 'string' ? t : t?.type; if (!ALL_TRANSITIONS.includes(type)) fail(`${where}: unknown transition "${type}" (expected one of ${ALL_TRANSITIONS.join(', ')})`); };
 checkTransition(spec.transition, 'transition');
 (spec.transitions ?? []).forEach((t, i) => t && checkTransition(t, `transitions[${i}]`));
 
@@ -295,16 +315,28 @@ spec.scenes.forEach((s, i) => {
 });
 
 // ------------------------------------------------------------ fonts
-// Inter, fetched once from Google Fonts and kept on disk, so renders work
-// offline afterwards. If it cannot be had, Chrome falls back to a system font.
+// Each family a style declares (display, text, mono) is fetched once from Google
+// Fonts (latin subset) and kept on disk, so renders work offline afterwards. When
+// a download fails there is ONE short attempt, remembered for 10 minutes (a
+// ".failed" marker), and text falls back to the style's declared stack.
+// UI_DEMO_FONTS_HOST points the download elsewhere (tests use an unreachable one);
+// UI_DEMO_FONTS_OFFLINE=1 never tries.
 const fontsDir = path.join(HOME_CACHE, 'fonts');
-const ensureFonts = async () => {
-  const css = path.join(fontsDir, 'inter.css');
-  if (fs.existsSync(css)) return true;
+const FONT_HOST = process.env.UI_DEMO_FONTS_HOST ?? 'https://fonts.googleapis.com';
+const fontKey = (f) => {
+  const slug = f.family.toLowerCase().replace(/[^a-z0-9]+/g, '-'), w = [...f.weights].sort((x, y) => x - y).join('.');
+  return slug === 'inter' && w === '500.600.700' ? 'inter' : `${slug}-${w}`;   // 'inter' is the name earlier versions cached under
+};
+const ensureFont = async (f) => {
+  const key = fontKey(f), css = path.join(fontsDir, `${key}.css`), marker = path.join(fontsDir, `${key}.failed`);
+  if (fs.existsSync(css)) return key;
+  if (process.env.UI_DEMO_FONTS_OFFLINE) return null;
+  try { if (Date.now() - fs.statSync(marker).mtimeMs < 10 * 60_000) return null; } catch {}
   try {
     fs.mkdirSync(fontsDir, { recursive: true });
     const ua = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
-    const res = await fetch('https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700&display=block', { headers: { 'user-agent': ua }, signal: AbortSignal.timeout(6000) });
+    const url = `${FONT_HOST}/css2?family=${encodeURIComponent(f.family).replace(/%20/g, '+')}:wght@${[...f.weights].sort((x, y) => x - y).join(';')}&display=block`;
+    const res = await fetch(url, { headers: { 'user-agent': ua }, signal: AbortSignal.timeout(4000) });
     let text = await res.text();
     if (!res.ok || !text.includes('@font-face')) throw new Error(`HTTP ${res.status}`);
     // keep the latin subset only (what the Remotion template loads)
@@ -312,16 +344,23 @@ const ensureFonts = async () => {
     text = blocks.join('\n');
     const urls = [...new Set([...text.matchAll(/url\((https:[^)]+)\)/g)].map((m) => m[1]))];
     await Promise.all(urls.map(async (u, i) => {
-      const f = `inter-${i}.woff2`;
-      fs.writeFileSync(path.join(fontsDir, f), Buffer.from(await (await fetch(u, { signal: AbortSignal.timeout(10000) })).arrayBuffer()));
-      text = text.split(u).join(`/fonts/${f}`);
+      const file = `${key}-${i}.woff2`;
+      fs.writeFileSync(path.join(fontsDir, file), Buffer.from(await (await fetch(u, { signal: AbortSignal.timeout(8000) })).arrayBuffer()));
+      text = text.split(u).join(`/fonts/${file}`);
     }));
     fs.writeFileSync(css, text);
-    return true;
+    return key;
   } catch (e) {
-    warn(`Inter could not be downloaded (${e.message}); text uses a system font instead`);
-    return false;
+    try { fs.mkdirSync(fontsDir, { recursive: true }); fs.writeFileSync(marker, String(e.message)); } catch {}
+    warn(`${f.family} could not be downloaded (${e.message}); text uses ${style.fonts.text.fallback.split(',')[0]} instead`);
+    return null;
   }
+};
+const ensureFonts = async () => {
+  const seen = new Map();
+  for (const f of Object.values(style.fonts)) if (f.family) seen.set(fontKey(f), f);
+  const keys = (await Promise.all([...seen.values()].map(ensureFont))).filter(Boolean);
+  return { keys, loads: [...seen.values()].flatMap((f) => f.weights.map((w) => `${w} 16px "${f.family}"`)) };
 };
 
 // ------------------------------------------------------------ server
@@ -470,7 +509,17 @@ const compositor = await openPage(`${origin}/index.html`);
 // ------------------------------------------------------------ stills
 // Each job is a page of real HTML; each shot captures one element (with a
 // margin for shadows and blur) as a transparent PNG.
-const hasFonts = await ensureFonts();
+const fonts = await ensureFonts();
+// Every colour the GPU needs as numbers: hex and rgb() are read here, anything else (oklch, hsl, names) is resolved by Chrome.
+style.rgb = {};
+{
+  const need = [];
+  for (const c of colorStrings(style)) { const p = parseColor(c); if (p) style.rgb[c] = p; else need.push(c); }
+  if (need.length) {
+    const r = await compositor.call('Runtime.evaluate', { returnByValue: true, expression: `(()=>{const c=document.createElement('canvas');c.width=c.height=1;const x=c.getContext('2d',{willReadFrequently:true});return ${JSON.stringify(need)}.map(s=>{x.clearRect(0,0,1,1);x.fillStyle='#010203';x.fillStyle=s;x.fillRect(0,0,1,1);const d=x.getImageData(0,0,1,1).data;return [d[0],d[1],d[2],d[3]/255]})})()` });
+    need.forEach((c, k) => { style.rgb[c] = r.result.value?.[k] ?? [59, 107, 255, 1]; });
+  }
+}
 const stills = {};
 const tStills = Date.now();
 const captureJobs = async (jobs) => {
@@ -485,6 +534,7 @@ const captureJobs = async (jobs) => {
     await page.call('Emulation.setDeviceMetricsOverride', { width: W, height: H, deviceScaleFactor: 1, mobile: false });
     await page.call('Emulation.setDefaultBackgroundColorOverride', { color: { r: 0, g: 0, b: 0, a: 0 } });
     await page.call('Page.navigate', { url: `${origin}/stills.html` });
+    await page.call('Runtime.evaluate', { awaitPromise: true, expression: `Promise.all(${JSON.stringify(fonts.loads)}.map(f=>document.fonts.load(f).catch(()=>{})))` });   // fonts are ready before anything is laid out
     for (let j; (j = queue.shift());) {
       const ok = await page.call('Runtime.evaluate', {
         awaitPromise: true, returnByValue: true,
@@ -493,21 +543,37 @@ const captureJobs = async (jobs) => {
           await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))); return true})()`,
       });
       if (ok.exceptionDetails) fail(`could not lay out "${j.id}": ${ok.exceptionDetails.exception?.description ?? ok.exceptionDetails.text}`);
+      const settle = () => page.call('Runtime.evaluate', { awaitPromise: true, expression: 'new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))' });
       for (const s of j.shots) {
-        const r = await page.call('Runtime.evaluate', {
-          returnByValue: true,
-          expression: `(()=>{document.getElementById('shotcss').textContent=${JSON.stringify(shotCss(s))};const e=document.querySelector(${JSON.stringify(s.rect)});if(!e)return null;const r=e.getBoundingClientRect();return {l:r.left,t:r.top,r:r.right,b:r.bottom}})()`,
-        });
-        const b = r.result.value;
-        if (!b) fail(`captured piece "${s.id}" is missing from its page`);
-        const pad = s.pad ?? 0;
-        const x0 = s.full ? 0 : Math.max(0, Math.floor(b.l - pad)), y0 = s.full ? 0 : Math.max(0, Math.floor(b.t - pad));
-        const x1 = s.full ? W : Math.min(W, Math.ceil(b.r + pad)), y1 = s.full ? H : Math.min(H, Math.ceil(b.b + pad));
-        if (x1 <= x0 || y1 <= y0) fail(`captured piece "${s.id}" is off screen`);
-        const shot = await page.call('Page.captureScreenshot', { format: 'png', optimizeForSpeed: true, fromSurface: true, clip: { x: x0, y: y0, width: x1 - x0, height: y1 - y0, scale: 1 } });
-        stillFiles.push(Buffer.from(shot.data, 'base64'));
-        if (flags['dump-stills']) { fs.mkdirSync(flags['dump-stills'], { recursive: true }); fs.writeFileSync(path.join(flags['dump-stills'], `${stillFiles.length - 1}.png`), stillFiles[stillFiles.length - 1]); fs.appendFileSync(path.join(flags['dump-stills'], 'index.txt'), `${stillFiles.length - 1} ${s.id}\n`); }
-        stills[s.id] = { file: `/still/${stillFiles.length - 1}.png`, x: x0, y: y0, w: x1 - x0, h: y1 - y0, bx: b.l, by: b.t, bw: b.r - b.l, bh: b.b - b.t };
+        await page.call('Runtime.evaluate', { returnByValue: true, expression: `document.getElementById('shotcss').textContent=${JSON.stringify(shotCss(s))}` });
+        // one capture of the element (or of one pose of it); the first pose is also stored under the plain id
+        const grab = async (id, extra = {}) => {
+          const r = await page.call('Runtime.evaluate', {
+            returnByValue: true,
+            expression: `(()=>{const e=document.querySelector(${JSON.stringify(s.rect)});if(!e)return null;const r=e.getBoundingClientRect();const o={l:r.left,t:r.top,r:r.right,b:r.bottom};
+              ${s.chars ? `const t=e.matches('[data-type]')?e:(e.querySelector('[data-type]')||e);const w=document.createTreeWalker(t,NodeFilter.SHOW_TEXT);const rights=[];let top=1e9,bot=0,left=null;for(let n;(n=w.nextNode());){for(let i=0;i<n.data.length;i++){const q=document.createRange();q.setStart(n,i);q.setEnd(n,i+1);const b=q.getBoundingClientRect();if(!b.width){rights.push(rights.length?rights[rights.length-1]:b.right);continue}rights.push(b.right);top=Math.min(top,b.top);bot=Math.max(bot,b.bottom);if(left===null)left=b.left}}o.chars={rights,left,top,bot};` : ''}
+              return o})()`,
+          });
+          const b = r.result.value;
+          if (!b) fail(`captured piece "${s.id}" is missing from its page`);
+          const pad = s.pad ?? 0;
+          const x0 = s.full ? 0 : Math.max(0, Math.floor(b.l - pad)), y0 = s.full ? 0 : Math.max(0, Math.floor(b.t - pad));
+          const x1 = s.full ? W : Math.min(W, Math.ceil(b.r + pad)), y1 = s.full ? H : Math.min(H, Math.ceil(b.b + pad));
+          if (x1 <= x0 || y1 <= y0) fail(`captured piece "${s.id}" is off screen`);
+          const shot = await page.call('Page.captureScreenshot', { format: 'png', optimizeForSpeed: true, fromSurface: true, clip: { x: x0, y: y0, width: x1 - x0, height: y1 - y0, scale: 1 } });
+          stillFiles.push(Buffer.from(shot.data, 'base64'));
+          if (flags['dump-stills']) { fs.mkdirSync(flags['dump-stills'], { recursive: true }); fs.writeFileSync(path.join(flags['dump-stills'], `${stillFiles.length - 1}.png`), stillFiles[stillFiles.length - 1]); fs.appendFileSync(path.join(flags['dump-stills'], 'index.txt'), `${stillFiles.length - 1} ${id}\n`); }
+          const ch = b.chars && b.chars.rights.length ? { cx: b.chars.rights.map((v) => v - x0), cl: b.chars.left - x0, cy0: b.chars.top - y0, cy1: b.chars.bot - y0 } : {};
+          stills[id] = { file: `/still/${stillFiles.length - 1}.png`, x: x0, y: y0, w: x1 - x0, h: y1 - y0, bx: b.l, by: b.t, bw: b.r - b.l, bh: b.b - b.t, ...ch, ...extra };
+        };
+        if (s.poses?.length) {
+          for (let k = 0; k < s.poses.length; k++) {
+            await page.call('Runtime.evaluate', { returnByValue: true, expression: `document.querySelector(${JSON.stringify(s.rect)}).innerHTML=${JSON.stringify(s.poses[k])}` });
+            await settle();
+            await grab(`${s.id}@${k}`, { poses: s.poses.length });
+            if (k === 0) stills[s.id] = { ...stills[`${s.id}@0`] };
+          }
+        } else await grab(s.id);
       }
     }
     await send('Target.closeTarget', { targetId: page.targetId }).catch(() => {});
@@ -515,9 +581,9 @@ const captureJobs = async (jobs) => {
   await Promise.all(Array.from({ length: Math.min(3, jobs.length) }, worker));
 };
 // The page the stills are laid out on (fonts from the local cache).
-stillsHtml = `<!doctype html><meta charset="utf-8"><style>${baseCss(W, H)}</style>${hasFonts ? '<link rel="stylesheet" href="/fonts/inter.css">' : ''}<style id="jobcss"></style><style id="shotcss"></style><body><div id="root"></div></body>`;
+stillsHtml = `<!doctype html><meta charset="utf-8"><style>${baseCss(W, H, style)}</style>${fonts.keys.map((k) => `<link rel="stylesheet" href="/fonts/${k}.css">`).join('')}<style id="jobcss"></style><style id="shotcss"></style><body><div id="root"></div></body>`;
 // Logo files are served through /media like the recordings.
-const jobs = jobsFor(spec, (src) => mediaUrl(resolveSrc(src, 'theme.logo')));
+const jobs = jobsFor(spec, style, (src) => mediaUrl(resolveSrc(src, 'theme.logo')));
 await captureJobs(jobs);
 const tStillsDone = Date.now();
 
@@ -529,7 +595,7 @@ if (stillMode) stillOutPath = path.resolve(flags['still-out']);
 const stillFrame = Math.min(N - 1, Math.max(0, Math.round(+flags.still * FPS)));
 
 const buildManifest = () => ({
-  W, H, fps: FPS, frames: N, spec, bitrate, software: !!flags.software, mode: stillMode ? 'still' : 'video', stillFrame,
+  W, H, fps: FPS, frames: N, spec, style: serialisable(style), bitrate, software: !!flags.software, mode: stillMode ? 'still' : 'video', stillFrame,
   stills,
   clips: Object.fromEntries([...clips].map(([src, c]) => [src, {
     url: mediaUrl(c.abs),
@@ -671,7 +737,7 @@ if (stillMode) {
   else console.log(`saved ${stillOutPath} (${W}x${H}, frame ${stillFrame}, ${wallSec.toFixed(1)} s wall)`);
 } else if (JSON_OUT) {
   console.log(JSON.stringify({
-    ok: true, out: outPath, width: W, height: H, fps: FPS, frames: N, durationSec: +DURATION.toFixed(3), wallSec: +wallSec.toFixed(2), renderFps: +renderFps.toFixed(1), warnings,
+    ok: true, style: style.name, out: outPath, width: W, height: H, fps: FPS, frames: N, durationSec: +DURATION.toFixed(3), wallSec: +wallSec.toFixed(2), renderFps: +renderFps.toFixed(1), warnings,
     timing: Object.fromEntries(Object.entries(timing).map(([k, v]) => [k, +v.toFixed(2)])), renderer: result.renderer, encoder: result.enc?.hardware, bytes: chunkBytes,
   }));
 } else {
