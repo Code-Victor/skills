@@ -6,8 +6,11 @@
 //
 //   node scripts/auto-camera.mjs <video.json> [--public <dir>] [--dry]
 //
-// Reads <public>/<clip>.events.json (written by capture.mjs next to each clip;
-// copy it along with the clip). Edits video.json in place, only for:
+// Reads <public>/<src>.events.json for each clip, e.g. clips/after.mp4.events.json
+// (capture.mjs writes it next to the clip; demo.mjs keeps clips and events in
+// the demo folder's clips/ and passes the demo folder as <public>).
+// <public> defaults to ../public of the video.json, else its own folder.
+// Edits video.json in place, only for:
 //   - clip and split scenes: sets `aspect` to the take's own shape.
 //   - clip scenes with "autoCamera": true or { options }: writes `moves`
 //     and tags them "movesFrom": "auto-camera". Re-running regenerates them.
@@ -183,7 +186,7 @@ for (const [i, scene] of spec.scenes.entries()) {
   }
   if (scene.autoCamera && scene.type === 'clip') {
     if (!ev) {
-      console.error(`scene ${i}: no ${src}.events.json in ${pub}; recapture with capture.mjs or copy it next to the clip`);
+      console.error(`scene ${i}: no ${src}.events.json in ${pub}; recapture it with capture.mjs (it writes ${src}.events.json next to the clip), or keep the file beside the clip in ${pub}`);
       process.exitCode = 1;
       continue;
     }
