@@ -72,12 +72,15 @@ build_base() {
     '
     # remocn components are copied into src/components/remocn (you own them).
     npx -y shadcn@latest add $(printf '@remocn/%s ' "${COMPONENTS[@]}") --yes
+    # Fetch Remotion's headless browser into the base, so the first render of
+    # every project doesn't stop to download it (about 90 MB).
+    npx remotion browser ensure || true
   )
   mv "$base.tmp" "$base"
 }
 
 if [[ ! -d "$CACHE" ]]; then
-  echo "Building the base project once (about 2 minutes); later runs copy it."
+  echo "Building the base project once (several minutes, it downloads packages and a browser); later runs copy it."
   build_base "$CACHE"
 fi
 
