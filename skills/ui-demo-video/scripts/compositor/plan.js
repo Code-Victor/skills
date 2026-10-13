@@ -10,7 +10,8 @@
 // the text lays out the same way. All sizes are px at the video's width.
 
 export const ACCENT = '#3b6bff';
-export const FONT = 'Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif';
+// Single quotes only: this string is pasted into style="..." attributes.
+export const FONT = "Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif";
 // remocn's title components read their font from this variable, then fall back.
 const REMOCN_FONT = 'var(--font-geist-sans), -apple-system, BlinkMacSystemFont, sans-serif';
 export const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);

@@ -468,6 +468,7 @@ const captureJobs = async (jobs) => {
         if (x1 <= x0 || y1 <= y0) fail(`captured piece "${s.id}" is off screen`);
         const shot = await page.call('Page.captureScreenshot', { format: 'png', optimizeForSpeed: true, fromSurface: true, clip: { x: x0, y: y0, width: x1 - x0, height: y1 - y0, scale: 1 } });
         stillFiles.push(Buffer.from(shot.data, 'base64'));
+        if (flags['dump-stills']) { fs.mkdirSync(flags['dump-stills'], { recursive: true }); fs.writeFileSync(path.join(flags['dump-stills'], `${stillFiles.length - 1}.png`), stillFiles[stillFiles.length - 1]); fs.appendFileSync(path.join(flags['dump-stills'], 'index.txt'), `${stillFiles.length - 1} ${s.id}\n`); }
         stills[s.id] = { file: `/still/${stillFiles.length - 1}.png`, x: x0, y: y0, w: x1 - x0, h: y1 - y0, bx: b.l, by: b.t, bw: b.r - b.l, bh: b.b - b.t };
       }
     }

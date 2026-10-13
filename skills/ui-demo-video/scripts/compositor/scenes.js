@@ -11,7 +11,7 @@ import { ID, accentOf, bandTop, sceneBox, splitBoxes, tagColorOf } from './plan.
 const SPRING = { damping: 200 };
 const clamp01 = (v) => Math.min(1, Math.max(0, v));
 const hex = (c) => {
-  const m = /^#?([0-9a-f]{3}|[0-9a-f]{6})/i.exec(c || '');
+  const m = /^#?([0-9a-f]{6}|[0-9a-f]{3})/i.exec(c || '');
   let h = m ? m[1] : '3b6bff';
   if (h.length === 3) h = [...h].map((x) => x + x).join('');
   return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16) / 255);

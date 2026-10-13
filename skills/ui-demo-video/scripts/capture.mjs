@@ -322,8 +322,8 @@ if (mode === 'shot') {
   await checkSession(args.url);
   const { data } = await send('Page.captureScreenshot', { format: 'png' });
   writeFileSync(out, Buffer.from(data, 'base64'));
-  const leaked = await evaluate('window.__cap_hide_check ? __cap_hide_check() : 0');
-  if (leaked) warn(`${leaked} dev overlay element(s) are still visible; pass --hide "<css>" for them`);
+  const leaked = await evaluate('window.__cap_hide_check ? __cap_hide_check() : []');
+  if (leaked?.length) warn(`dev overlay still visible (${leaked.join(', ')}); pass --hide "<css>" for it`);
   await succeed(`saved ${out} (${width * scale}x${height * scale}, wall ${wallSec().toFixed(1)}s)`, { file: out, width, height });
 }
 
@@ -628,27 +628,36 @@ const startSink = ({ file, nullOut = false }) => {
   let failure = null;
   let chain = Promise.resolve();
   let dropped = 0;
+  // Screencast frames arrive up to ~0.1 s out of order. A short reorder
+  // buffer puts them back in time order before they reach ffmpeg, which wants
+  // increasing stamps; a frame that still arrives behind one already sent is
+  // stale (an older paint) and is dropped.
+  const REORDER = 8;
+  let pending = [];
+  const emit = async ({ buf, ts }) => {
+    if (t0 === null) t0 = ts;
+    const t = (ts - t0) / SLOW;
+    if (t <= lastT) { dropped++; return; }
+    if (!enc) {
+      size = imageSize(buf);
+      enc = startEncoder({ out: file, w: size[0], h: size[1], fps, crf, encoder, png: lossless, nullOut });
+    }
+    lastT = t;
+    times.push(t);
+    await enc.push(buf, t);
+  };
   const onFrame = (m) => {
     if (m.method !== 'Page.screencastFrame') return;
     const { data, metadata, sessionId } = m.params;
-    const buf = Buffer.from(data, 'base64');
+    const frame = { buf: Buffer.from(data, 'base64'), ts: metadata.timestamp };
     const mine = (chain = chain.then(async () => {
       if (failure) return;
-      if (t0 === null) t0 = metadata.timestamp;
-      const t = (metadata.timestamp - t0) / SLOW;
-      // Frames can arrive a few ms out of order (seen right after a --setup
-      // navigation); a stale one cannot be shown after a newer one.
-      if (t <= lastT) { dropped++; return; }
-      if (!enc) {
-        size = imageSize(buf);
-        enc = startEncoder({ out: file, w: size[0], h: size[1], fps, crf, encoder, png: lossless, nullOut });
-      }
-      lastT = t;
-      times.push(t);
-      await enc.push(buf, t);
+      pending.push(frame);
+      pending.sort((x, y) => x.ts - y.ts);
+      while (pending.length > REORDER) await emit(pending.shift());
     }).catch((e) => { failure = e; }));
     // The ack is what lets Chrome send the next frame, so it waits for ffmpeg
-    // to have taken this one: backpressure, not a growing queue.
+    // to have taken what is due: backpressure, not a growing queue.
     mine.then(() => send('Page.screencastFrameAck', { sessionId }).catch(() => {}));
   };
   tab.on(onFrame);
@@ -669,12 +678,19 @@ const startSink = ({ file, nullOut = false }) => {
         maxFramesInFlight: 8,
       });
     },
-    async end(endSec) {
+    // Stops, flushes the reorder buffer and closes the file; the clip runs to
+    // minEnd or just past its last frame, whichever is later. Returns that end.
+    async end(minEnd) {
       await send('Page.stopScreencast').catch(() => {});
       await chain;
       tab.off(onFrame);
+      try {
+        for (const f of pending.splice(0)) await emit(f);
+      } catch (e) { failure ??= e; }
       if (failure) throw failure;
+      const endSec = Math.max((times.at(-1) ?? 0) + 0.2, minEnd);
       if (enc) await enc.finish(endSec);
+      return endSec;
     },
     abort() { try { enc?.abort(); } catch {} },
   };
@@ -712,8 +728,8 @@ const measureRate = async () => {
   const probe = startSink({ file: '', nullOut: true });
   await probe.begin();
   await sleep(2200);
+  await probe.end(0).catch(() => {});
   const stamped = probe.times.slice();
-  await probe.end(stamped.at(-1) ?? 0).catch(() => {});
   SLOW = savedSlow;
   await evaluate("document.getElementById('__cap_probe')?.remove()");
   const body = stamped.filter((t) => t > 0.4);
@@ -794,14 +810,11 @@ const takeOnce = async () => {
     throw e;
   }
   clearTimeout(watchdog);
-  const leaked = await evaluate('window.__cap_hide_check ? __cap_hide_check() : 0').catch(() => 0);
-  if (leaked) warn(`${leaked} dev overlay element(s) were still visible at the end; pass --hide "<css>" for them`);
+  const leaked = await evaluate('window.__cap_hide_check ? __cap_hide_check() : []').catch(() => []);
+  if (leaked?.length) warn(`dev overlay still visible at the end (${leaked.join(', ')}); pass --hide "<css>" for it`);
   await checkSession(args.url, 'at the end of the take');
-  const nFrames = sink.times.length;
+  const endSec = await sink.end(durationSec).catch(async (e) => die(e.message));
   const t0 = sink.t0;
-  const endSec = Math.max((sink.times.at(-1) ?? 0) + 0.2, durationSec);
-  if (nFrames > 2) await sink.end(endSec);
-  else await sink.end(0).catch(() => {});
   await send('Animation.setPlaybackRate', { playbackRate: 1 });
   return { times: sink.times.slice(), t0, endSec, size: sink.size, dropped: sink.dropped };
 };
@@ -819,7 +832,7 @@ for (let attempt = 1; ; attempt++) {
     await die(e?.message ?? String(e));
   });
   // A screencast occasionally delivers nothing (tab not composited yet): retry.
-  if (take.times.length <= 2) {
+  if (take.times.length === 0) {
     if (attempt >= 3) await die('empty take: the screencast produced no frames (tab not painting?)');
     console.error(`attempt ${attempt}: no frames, retrying`);
     continue;
@@ -830,7 +843,7 @@ for (let attempt = 1; ; attempt++) {
   // Never hand back a choppy clip silently.
   if (take.fpsDistinct !== null && take.fpsDistinct < 50 && AUTO && !retriedSlower) {
     retriedSlower = true;
-    const slower = Math.min(10, Math.ceil(SLOW * (60 / Math.max(take.fpsDistinct, 8)) * 1.1 * 2) / 2);
+    const slower = Math.min(10, Math.ceil(SLOW * Math.min(2, (60 / Math.max(take.fpsDistinct, 8)) * 1.1) * 2) / 2);
     console.error(`only ${take.fpsDistinct.toFixed(0)} distinct frames per second at ${SLOW}x; retrying at ${slower}x`);
     rmSync(tmpOut, { force: true });
     SLOW = slower;
@@ -846,7 +859,7 @@ if (take.size[0] < wantW * 0.98)
     `Restart it at that scale (SCALE=${scale} scripts/chrome.sh --stop; SCALE=${scale} scripts/chrome.sh) or pass --scale ${(take.size[0] / width).toFixed(0)}`);
 if (take.fpsDistinct !== null && take.fpsDistinct < 58)
   warn(`only ${take.fpsDistinct.toFixed(0)} distinct frames per second of motion: the clip may look choppy${AUTO ? '' : ' (try --slow auto, or a larger --slow)'}`);
-if (take.dropped) warn(`${take.dropped} stale screencast frame(s) dropped`);
+if (take.dropped > take.times.length * 0.05) warn(`${take.dropped} stale screencast frame(s) dropped`);
 
 renameSync(tmpOut, out);
 const bytes = statSync(out).size;

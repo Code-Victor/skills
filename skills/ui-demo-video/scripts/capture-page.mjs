@@ -59,6 +59,8 @@ export const hideScript = ({ hide, redact, floating, keep }) => `(() => {
   };
   const sweep = () => {
     for (const root of roots) {
+      // The host was removed (a framework remounted its overlay): forget it.
+      if (root.host && !root.host.isConnected) { roots.delete(root); continue; }
       adopt(root);
       if (root === document) tag();
       let found = [];
@@ -81,13 +83,14 @@ export const hideScript = ({ hide, redact, floating, keep }) => `(() => {
   // For capture.mjs to check, at the end of a take, that nothing slipped through.
   Object.defineProperty(window, '__cap_hide_check', {
     value: () => {
-      let n = 0;
+      const left = [];
       for (const root of roots) {
+        if (root.host && !root.host.isConnected) continue;
         let found = [];
         try { found = root.querySelectorAll(sel); } catch {}
-        for (const el of found) if (getComputedStyle(el).display !== 'none') n++;
+        for (const el of found) if (getComputedStyle(el).display !== 'none') left.push(el.tagName.toLowerCase() + (el.id ? '#' + el.id : ''));
       }
-      return n;
+      return left;
     },
   });
   document.addEventListener('DOMContentLoaded', sweep);

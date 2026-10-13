@@ -412,10 +412,10 @@ if (doCapture) {
         const t = takes[n];
         const r = await run(`record-${n}`, process.execPath,
           [join(HERE, 'capture.mjs'), ...captureArgs(t, { port, stepsFile: stepsFile(n), out: clipFile(n), allowTemp: !!opt.force }), '--json'],
-          { timeoutSec: Math.max(180, t.duration * 12 + 90) });
+          { timeoutSec: Math.max(300, t.duration * 25 + 120) });
         const j = lastJson(r.text);
         if (r.code !== 0 || !j?.ok) {
-          const why = j?.error ?? (r.timedOut ? 'timed out' : tail(r.text, 8));
+          const why = r.timedOut ? 'timed out (killed by the runner; the machine may be overloaded, see build/logs)' : (j?.error ?? tail(r.text, 8));
           return { ok: false, code: r.code, text: why };
         }
         writeFileSync(takeFile(n), `${JSON.stringify({
