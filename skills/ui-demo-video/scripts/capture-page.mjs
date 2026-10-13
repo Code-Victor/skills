@@ -235,24 +235,31 @@ export const cursorScript = ({ scale, ripple, guard }) => `(() => {
 // Element queries shared by steps, dry runs and scout. Runs in the page; takes
 // a target ({selector}, {text}) and answers about it. Kept as one function so
 // the "on screen" and "smallest match" rules exist in exactly one place.
-const QUERY = `(op, arg) => {
+const QUERY = `async (op, arg) => {
   const shown = (e) => {
     const r = e.getBoundingClientRect();
     return r.width > 0 && r.height > 0;
   };
   const visible = (e) => shown(e) && getComputedStyle(e).visibility !== 'hidden';
+  // Something a person could click: laid out, not hidden, not fully
+  // transparent (the element or anything above it).
+  const actionable = (e) => {
+    if (!visible(e)) return false;
+    for (let n = e; n && n.nodeType === 1; n = n.parentElement) if (getComputedStyle(n).opacity === '0') return false;
+    return true;
+  };
   const TEXTY = 'button, a, [role], label, span, div, p, h1, h2, h3, h4, h5, h6, li, td, th, strong, em, code';
   const find = (p) => {
     if (!p) return null;
     if (p.text) {
       return [...document.querySelectorAll(TEXTY)]
-        .filter((e) => e.textContent.trim() === p.text && shown(e))
+        .filter((e) => e.textContent.trim() === p.text && actionable(e))
         .sort((a, b) => a.getBoundingClientRect().width - b.getBoundingClientRect().width)[0] || null;
     }
     if (p.selector) {
       let all = [];
       try { all = [...document.querySelectorAll(p.selector)]; } catch (e) { return { error: String(e.message || e) }; }
-      return all.find(shown) || null;
+      return all.find(actionable) || null;
     }
     return null;
   };
@@ -296,6 +303,32 @@ const QUERY = `(op, arg) => {
     return { selector: path.join(' > ') };
   };
 
+  if (op === 'settle') {
+    // Playwright-style actionability: the target exists, is visible, and keeps
+    // the same box across two consecutive animation frames. Answers with where
+    // it stands: notfound, invisible (matches exist but none could be clicked),
+    // moving, or ok with the box. Nothing waits when the target is already still.
+    let all = [];
+    if (arg.text) all = [...document.querySelectorAll(TEXTY)].filter((e) => e.textContent.trim() === arg.text);
+    else {
+      try { all = [...document.querySelectorAll(arg.selector)]; } catch (e) { return { state: 'bad', error: String(e.message || e) }; }
+    }
+    if (!all.length) return { state: 'notfound' };
+    let el = all.filter(actionable);
+    if (arg.text) el.sort((a, b) => a.getBoundingClientRect().width - b.getBoundingClientRect().width);
+    el = el[0];
+    if (!el) return { state: 'invisible' };
+    el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
+    const b0 = box(el);
+    await frame();
+    const b1 = box(el);
+    await frame();
+    const b2 = box(el);
+    const same = (a, b) => a.every((v, i) => Math.abs(v - b[i]) < 0.05);
+    if (!el.isConnected || !actionable(el)) return { state: 'moving' };
+    return same(b0, b1) && same(b1, b2) ? { state: 'ok', box: b2 } : { state: 'moving' };
+  }
   if (op === 'box') {
     const e = find(arg);
     return e && !e.error ? box(e) : null;

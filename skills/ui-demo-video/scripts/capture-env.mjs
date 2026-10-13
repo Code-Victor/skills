@@ -69,7 +69,7 @@ export function storeRate(c, rate) {
 // The smallest slowdown (in halves) that paints at least `target` distinct
 // frames per video second given `rate` frames per wall second. Headroom keeps
 // a busy moment from tipping a take under the line.
-export function pickSlow(rate, target = 60, headroom = 1.25) {
+export function pickSlow(rate, target = 60, headroom = 1.5) {
   if (!(rate > 0)) return 5;
   const raw = (target * headroom) / rate;
   return Math.min(10, Math.max(1, Math.ceil(raw * 2) / 2));

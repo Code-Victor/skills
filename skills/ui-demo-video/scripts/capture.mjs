@@ -354,8 +354,6 @@ const pageUntil = async (t) => {
 // A dry run rehearses at full speed: waits shrink, glides become one move.
 const pageSleep = (sec) => sleep(DRY || mode === 'scout' ? Math.min(sec * 200, 500) : sec * 1000 * SLOW);
 const rehearse = DRY || mode === 'scout';
-// Missed targets are waited for in wall time, bounded.
-const findLimitMs = () => (rehearse ? 3000 : Math.min(5 * SLOW, 10) * 1000);
 
 const events = [];
 const path = []; // the drawn cursor, sample by sample
@@ -394,31 +392,40 @@ const mouse = async (type, x, y) => {
 // element's box and may go outside 0..1 to point around it.
 // Elements that mount a beat later (a sheet sliding in, a menu opening) are
 // waited for, up to 5 s of page time but never more than 10 s of wall time.
-const describe = (p) => (p.text ? `text "${p.text}"` : p.selector ? `selector ${p.selector}` : JSON.stringify(p));
-const resolveBox = async (p, op = 'point') => {
+// A target is acted on only once it is actionable: it exists, is visible and
+// holds still for two animation frames. The wait is bounded in wall time (5 s,
+// longer when the clock is slowed; a step can set "actionTimeout" in seconds)
+// and the probe itself costs two frames only when the target is already still.
+let stepLimit = null;
+const actionLimitMs = () => (stepLimit ?? (rehearse ? 5 : Math.min(Math.max(5, 2.5 * SLOW), 10))) * 1000;
+const resolveBox = async (p) => {
   if (!p || (!p.selector && !p.text)) return null;
-  const until = Date.now() + findLimitMs();
+  const what = p.text ? `text "${p.text}"` : `selector ${p.selector}`;
+  const until = Date.now() + actionLimitMs();
   for (;;) {
-    const r = await ask(op, p);
-    if (op === 'box') {
-      if (r) return r;
-    } else {
-      if (r?.bad) throw new StepError(-1, null, `invalid selector ${p.selector}: ${r.bad}`, p);
-      if (r?.box) return r.box;
+    const r = await ask('settle', p);
+    if (r?.state === 'bad') throw new StepError(-1, null, `invalid selector ${p.selector}: ${r.error}`, p);
+    if (r?.state === 'ok') return r.box;
+    if (Date.now() > until) {
+      const why = {
+        notfound: `not found: no element for ${what}`,
+        invisible: `not visible: ${what} exists but is hidden or fully transparent`,
+        moving: `still moving: ${what} did not hold still for two frames`,
+      }[r?.state] ?? `not actionable: ${what}`;
+      throw new StepError(-1, null, `${why} (after ${(actionLimitMs() / 1000).toFixed(1)} s)`, p);
     }
-    if (Date.now() > until)
-      throw new StepError(-1, null, p.text ? `no visible element with text "${p.text}"` : `no visible element for selector ${p.selector}`, p);
-    await sleep(100);
+    await sleep(r?.state === 'moving' ? 30 : 100);
   }
 };
-const resolvePoint = async (p) => {
+// {box, at} -> the point: the box centre for text, `at` fractions for a selector.
+const resolveTarget = async (p) => {
   if (p.selector || p.text) {
     const box = await resolveBox(p);
-    if (p.text) return [box[0] + box[2] / 2, box[1] + box[3] / 2];
+    if (p.text) return { pt: [box[0] + box[2] / 2, box[1] + box[3] / 2], box };
     const [fx, fy] = p.at ?? [0.5, 0.5];
-    return [box[0] + box[2] * fx, box[1] + box[3] * fy];
+    return { pt: [box[0] + box[2] * fx, box[1] + box[3] * fy], box };
   }
-  return [p.x, p.y];
+  return { pt: [p.x, p.y], box: null };
 };
 
 const STEP_MS = 8;
@@ -486,6 +493,7 @@ const waitFor = async ({ selector, text, state = 'visible', timeout = 8 }) => {
 
 const runSteps = async () => {
   for (const [i, s] of steps.entries()) {
+    stepLimit = s.actionTimeout ?? null;
     try {
       // Tell auto-camera to pull back out here (a panel or page opens). Logged
       // before the step's wait, so the pull-out starts with the change.
@@ -498,14 +506,18 @@ const runSteps = async () => {
       // drawing the camera to it, e.g. a toast while the shot stays wide.
       if (s.mark) {
         const target = s.target ?? s.move ?? s.click ?? {};
-        const box = target.selector || target.text ? await resolveBox(target, 'box') : null;
+        const box = target.selector || target.text ? await resolveBox(target) : null;
         log('mark', { label: s.mark, box, ...(s.look === false ? { look: false } : {}) });
       }
-      if (s.move) await moveTo(await resolvePoint(s.move), s.dur ?? 0.8);
+      if (s.move) await moveTo((await resolveTarget(s.move)).pt, s.dur ?? 0.8);
       if (s.click) {
         const target = typeof s.click === 'object' ? s.click : null;
-        if (target) await moveTo(await resolvePoint(target), s.dur ?? 0.6);
-        await click(target && (target.selector || target.text) ? await resolveBox(target, 'box').catch(() => null) : null);
+        let hit = null;
+        if (target) {
+          hit = await resolveTarget(target);
+          await moveTo(hit.pt, s.dur ?? 0.6);
+        }
+        await click(hit?.box ?? null);
       }
       if (s.type) {
         if (s.instant || rehearse) {
@@ -841,7 +853,6 @@ for (let attempt = 1; ; attempt++) {
     continue;
   }
   const toVideo = (wall) => Math.max(0, (wall - take.t0) / SLOW);
-  if (process.env.CAP_DEBUG) writeFileSync(process.env.CAP_DEBUG, JSON.stringify({ times: take.times, motion: motion.map(([s, e]) => [toVideo(s), toVideo(e)]) }));
   take.fpsDistinct = distinctFps(take.times, motion.map(([s, e]) => [toVideo(s), toVideo(e)]));
   // Never hand back a choppy clip silently.
   if (take.fpsDistinct !== null && take.fpsDistinct < 50 && AUTO && !retriedSlower) {
