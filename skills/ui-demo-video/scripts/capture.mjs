@@ -756,30 +756,41 @@ const measureRate = async () => {
 const pickSlowFor = async () => {
   const cfg = { w: width, h: height, dsf: scale, format: lossless ? 'png' : `jpeg${jpegQuality}`, encoder, headless: tab.headless };
   const others = await otherPages(port, tab.targetId);
-  let rate = !others.length && !args.recalibrate ? cachedRate(cfg) : null;
+  // Alone: trust a fresh calibration, or measure. With other takes running a
+  // measurement would only see the contention of the moment, so share the
+  // last quiet measurement among them instead.
+  let rate = !args.recalibrate ? cachedRate(cfg, others.length ? 24 * 3600e3 : 3600e3) : null;
   let how = 'cached';
+  if (rate && others.length) { rate /= others.length + 1; how = `cached, shared with ${others.length} other take(s)`; }
   if (!rate) {
     rate = await measureRate();
     how = 'measured';
     if (rate > 0 && !others.length) storeRate(cfg, rate);
   }
   const slow = pickSlow(rate);
-  say(`slow ${slow}x (${how} ${rate.toFixed(0)} frames a second${others.length ? `, ${others.length} other tab(s) busy` : ''})`);
+  say(`slow ${slow}x (${how} ${rate.toFixed(0)} frames a second)`);
   return slow;
 };
 
 // Distinct painted frames per second of video, over the stretches where the
-// cursor was moving (a still page paints nothing, and that is fine). Counted in
-// output-frame slots, so it cannot exceed fps.
-const distinctFps = (times, windows) => {
-  const total = windows.reduce((a, [s, e]) => a + (e - s), 0);
+// cursor was moving (a still page paints nothing, and that is fine). `fps` is
+// the count of distinct screencast frames; `coverage` is how many of the 60
+// output slots a second had a new frame, which is what the eye sees.
+const paintStats = (times, windows) => {
+  // The glide eases in and out: over its first and last 15% the cursor moves
+  // under a device pixel per step, nothing repaints, and nothing needs to.
+  // Only the stretch where it visibly travels is counted.
+  const core = windows.map(([s, e]) => [s + (e - s) * 0.15, e - (e - s) * 0.15]);
+  const total = core.reduce((a, [s, e]) => a + (e - s), 0);
   if (total < 0.4) return null;
   const slots = new Set();
+  let n = 0;
   for (const t of times) {
-    const slot = Math.round(t * fps);
-    if (windows.some(([s, e]) => t >= s && t <= e)) slots.add(slot);
+    if (!core.some(([s, e]) => t >= s && t <= e)) continue;
+    n++;
+    slots.add(Math.round(t * fps));
   }
-  return Math.min(fps, slots.size / total);
+  return { fps: n / total, coverage: Math.min(fps, slots.size / total) };
 };
 
 let clockId = null;
@@ -853,12 +864,14 @@ for (let attempt = 1; ; attempt++) {
     continue;
   }
   const toVideo = (wall) => Math.max(0, (wall - take.t0) / SLOW);
-  take.fpsDistinct = distinctFps(take.times, motion.map(([s, e]) => [toVideo(s), toVideo(e)]));
+  const stats = paintStats(take.times, motion.map(([s, e]) => [toVideo(s), toVideo(e)]));
+  take.fpsDistinct = stats ? stats.fps : null;
+  take.coverage = stats ? stats.coverage : null;
   // Never hand back a choppy clip silently.
-  if (take.fpsDistinct !== null && take.fpsDistinct < 50 && AUTO && !retriedSlower) {
+  if (take.coverage !== null && take.coverage < 50 && AUTO && !retriedSlower) {
     retriedSlower = true;
-    const slower = Math.min(10, Math.ceil(SLOW * Math.min(2, (60 / Math.max(take.fpsDistinct, 8)) * 1.1) * 2) / 2);
-    console.error(`only ${take.fpsDistinct.toFixed(0)} distinct frames per second at ${SLOW}x; retrying at ${slower}x`);
+    const slower = Math.min(10, Math.ceil(SLOW * Math.min(2, (60 / Math.max(take.coverage, 8)) * 1.1) * 2) / 2);
+    console.error(`only ${take.coverage.toFixed(0)} of 60 frame slots a second had a new frame at ${SLOW}x; retrying at ${slower}x`);
     rmSync(tmpOut, { force: true });
     SLOW = slower;
     continue;
@@ -871,8 +884,8 @@ const wantW = Math.round(width * scale);
 if (take.size[0] < wantW * 0.98)
   warn(`frames are ${take.size[0]}px wide, not ${wantW}: this Chrome renders at ${(take.size[0] / width).toFixed(1)}x. ` +
     `Restart it at that scale (SCALE=${scale} scripts/chrome.sh --stop; SCALE=${scale} scripts/chrome.sh) or pass --scale ${(take.size[0] / width).toFixed(0)}`);
-if (take.fpsDistinct !== null && take.fpsDistinct < 58)
-  warn(`only ${take.fpsDistinct.toFixed(0)} distinct frames per second of motion: the clip may look choppy${AUTO ? '' : ' (try --slow auto, or a larger --slow)'}`);
+if (take.coverage !== null && take.coverage < 54)
+  warn(`only ${take.coverage.toFixed(0)} of 60 frame slots a second had a new frame during motion (${take.fpsDistinct.toFixed(0)} distinct frames a second): the clip may look choppy${AUTO ? '' : ' (try --slow auto, or a larger --slow)'}`);
 if (take.dropped > take.times.length * 0.05) warn(`${take.dropped} stale screencast frame(s) dropped`);
 
 renameSync(tmpOut, out);
@@ -894,7 +907,7 @@ const cursor = path.map((p) => ({
 // The cursor path goes on one line a sample so the file stays readable.
 const head = JSON.stringify({
   width, height, duration: +take.endSec.toFixed(3), fps, slow: SLOW,
-  ...(take.fpsDistinct !== null ? { distinctFps: +take.fpsDistinct.toFixed(1) } : {}),
+  ...(take.fpsDistinct !== null ? { distinctFps: +take.fpsDistinct.toFixed(1), frameCoverage: +take.coverage.toFixed(1) } : {}),
   events: timeline,
 }, null, 1);
 const eventsFile = `${out}.events.json`;
@@ -917,6 +930,6 @@ await succeed(
   `saved ${out} (${fw}x${fh}, ${take.endSec.toFixed(1)}s, ${dist} distinct fps, slow ${SLOW}x, ${(bytes / 1e6).toFixed(1)} MB, wall ${wallSec().toFixed(1)}s)`,
   {
     file: out, events: eventsFile, width: fw, height: fh, durationSec: +take.endSec.toFixed(2),
-    distinctFps: take.fpsDistinct === null ? null : +take.fpsDistinct.toFixed(1), paintedFrames: take.times.length, slow: SLOW, bytes,
+    distinctFps: take.fpsDistinct === null ? null : +take.fpsDistinct.toFixed(1), frameCoverage: take.coverage === null ? null : +take.coverage.toFixed(1), paintedFrames: take.times.length, slow: SLOW, bytes,
   },
 );
