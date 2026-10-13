@@ -106,6 +106,8 @@ export const takeSpec = (demo, name) => {
     steps: t.steps ?? [],
     setup: t.setup,
     pageSetup: t.pageSetup,
+    // How to rehearse, not how to record: kept out of the fingerprint.
+    rehearse: t.rehearse,
     options,
   };
 };
