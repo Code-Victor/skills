@@ -306,11 +306,15 @@ const ensureFonts = async () => {
 const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'compose-'));
 cleanups.push(() => fs.rmSync(workDir, { recursive: true, force: true }));
 const stillFiles = []; // captured pieces, served as /still/<n>.png
-let resolveManifest;
-const manifestReady = new Promise((r) => (resolveManifest = r));
-let resolveDone, rejectDone;
-const done = new Promise((res, rej) => { resolveDone = res; rejectDone = rej; });
-done.catch(() => {});
+let resolveManifest, manifestReady;
+let resolveDone, rejectDone, done;
+// One render attempt = one manifest and one "done" message from the page.
+const newAttempt = () => {
+  manifestReady = new Promise((r) => (resolveManifest = r));
+  done = new Promise((res, rej) => { resolveDone = res; rejectDone = rej; });
+  done.catch(() => {});
+};
+newAttempt();
 const h264Path = path.join(workDir, 'video.h264');
 let h264 = null, chunkSeq = 0, chunkBytes = 0, seqErrors = 0, lastProgress = Date.now(), progressFrame = 0;
 let stillOutPath = null, stillsHtml = '';
@@ -490,7 +494,7 @@ if (flags.still !== undefined && !flags['still-out']) fail('--still needs --stil
 if (stillMode) stillOutPath = path.resolve(flags['still-out']);
 const stillFrame = Math.min(N - 1, Math.max(0, Math.round(+flags.still * FPS)));
 
-const manifest = {
+const buildManifest = () => ({
   W, H, fps: FPS, frames: N, spec, bitrate, software: !!flags.software, mode: stillMode ? 'still' : 'video', stillFrame,
   stills,
   clips: Object.fromEntries([...clips].map(([src, c]) => [src, {
@@ -498,15 +502,32 @@ const manifest = {
     meta: { width: c.info.width, height: c.info.height, codec: c.info.codecString, avcC: c.info.avcC, hasB: c.info.hasB, packets: c.info.packets.map(({ pts, pos, size, key }) => ({ pts, pos, size, key })) },
   }])),
   images: Object.fromEntries([...imageSrcs].map((s) => [s, mediaUrl(resolveSrc(s, 'image'))])),
-};
-resolveManifest(manifest);
+});
 
-const tRender = Date.now();
-const watchdog = setInterval(() => { if (Date.now() - lastProgress > 90_000) rejectDone(new Failed('the render stopped making progress for 90 s')); }, 5000);
-cleanups.push(() => clearInterval(watchdog));
-const result = await done;
-clearInterval(watchdog);
-if (!result.ok) fail(`render failed in the page: ${result.fatal}${flags.verbose && result.stack ? '\n' + result.stack : ''}`);
+let tRender = Date.now(), result, attempt = 0, page = compositor;
+for (;;) {
+  lastProgress = Date.now();
+  resolveManifest(buildManifest());
+  const watchdog = setInterval(() => { if (Date.now() - lastProgress > 90_000) rejectDone(new Failed('the render stopped making progress for 90 s')); }, 5000);
+  cleanups.push(() => clearInterval(watchdog));
+  result = await done;
+  clearInterval(watchdog);
+  if (result.ok) break;
+  // A recording the decoder cannot read: transcode it to a clean proxy and try once more.
+  const bad = [...clips.keys()].find((src) => result.fatal.includes(` ${src}`) && /decode|decoder/i.test(result.fatal));
+  if (!bad || attempt++ > 0 || clips.get(bad).info.proxyOf) fail(`render failed in the page: ${result.fatal}${flags.verbose && result.stack ? '\n' + result.stack : ''}`);
+  const c = clips.get(bad);
+  warn(`${bad}: the decoder could not read it (${result.fatal.replace(/^.*?: /, '')}); using a transcoded proxy`);
+  const abs = await proxyFor(c.original, { reasons: ['decode error'], width: c.info.width });
+  const info = probeClip(abs);
+  if (info.reasons.length) fail(`${bad}: the transcoded proxy is unreadable too (${info.reasons.join(', ')})`);
+  info.proxyOf = c.original;
+  clips.set(bad, { info, abs, original: c.original });
+  await send('Target.closeTarget', { targetId: page.targetId }).catch(() => {});
+  newAttempt(); h264?.destroy(); h264 = null; chunkSeq = 0; chunkBytes = 0; fs.rmSync(h264Path, { force: true });
+  page = await openPage(`${origin}/index.html`);
+  tRender = Date.now();
+}
 const tRendered = Date.now();
 for (const w of result.warnings ?? []) warn(w);
 if (result.decodeFallbacks?.length) warn(`hardware decode failed for ${[...new Set(result.decodeFallbacks)].join(', ')}; software decode took over`);
@@ -560,7 +581,7 @@ if (!stillMode && flags.still !== undefined) {
   run('ffmpeg', ['-y', '-v', 'error', '-ss', String(Math.min(DURATION - 1 / FPS, +flags.still)), '-i', outPath, '-frames:v', '1', path.resolve(flags['still-out'])]);
 }
 if (flags.sheet && !stillMode) {
-  const count = Math.min(12, Math.max(4, Math.round(DURATION / 3)));
+  const count = Math.min(12, Math.max(9, Math.round(DURATION / 2.5)));
   const cols = count > 9 ? 3 : 3, rows = Math.ceil(count / cols), cellW = 640, cellH = Math.round((cellW * H) / W);
   const times = Array.from({ length: count }, (_, k) => Math.min(DURATION - 0.05, ((k + 0.5) / count) * DURATION));
   await Promise.all(times.map(async (t, k) => {
@@ -568,12 +589,12 @@ if (flags.sheet && !stillMode) {
     await runAsync('ffmpeg', ['-y', '-v', 'error', '-ss', t.toFixed(3), '-i', outPath, '-frames:v', '1', '-vf', `scale=${cellW}:${cellH}`, '-q:v', '3', f]);
     sheetFiles.set(`s${k}.jpg`, f);
   }));
-  const sheetW = cols * cellW + (cols + 1) * 10, sheetH = rows * (cellH + 30) + (rows + 1) * 10;
+  const sheetW = cols * cellW + (cols + 1) * 10, sheetH = rows * (cellH + 36) + rows * 10 + 10;
   const page = await openPage('about:blank');
   await page.call('Emulation.setDeviceMetricsOverride', { width: sheetW, height: sheetH, deviceScaleFactor: 1, mobile: false });
   await page.call('Page.navigate', { url: `${origin}/stills.html` });
-  const html = `<div style="display:grid;grid-template-columns:repeat(${cols},${cellW}px);gap:10px;padding:10px;width:${sheetW}px;background:#1b1b1f;font:600 15px ${'Inter,system-ui,sans-serif'};color:#d8d8de">${
-    times.map((t, k) => `<div style="height:${cellH + 30}px"><img src="/sheet/s${k}.jpg" style="width:${cellW}px;height:${cellH}px;display:block"><div style="padding-top:6px">${(t).toFixed(1)} s</div></div>`).join('')}</div>`;
+  const html = `<style>html,body{width:auto;height:auto;overflow:visible}</style><div style="display:grid;grid-template-columns:repeat(${cols},${cellW}px);gap:10px;padding:10px;width:${sheetW}px;background:#1b1b1f;font:600 15px ${'Inter,system-ui,sans-serif'};color:#d8d8de">${
+    times.map((t, k) => `<div style="height:${cellH + 26}px"><img src="/sheet/s${k}.jpg" style="width:${cellW}px;height:${cellH}px;display:block"><div style="padding-top:6px">${(t).toFixed(1)} s</div></div>`).join('')}</div>`;
   await page.call('Runtime.evaluate', { awaitPromise: true, expression: `(async()=>{document.getElementById('root').innerHTML=${JSON.stringify(html)};await document.fonts.ready;await Promise.all([...document.images].map(i=>i.decode()));return 1})()` });
   const shot = await page.call('Page.captureScreenshot', { format: 'png', clip: { x: 0, y: 0, width: sheetW, height: sheetH, scale: 1 } });
   fs.mkdirSync(path.dirname(path.resolve(flags.sheet)), { recursive: true });
