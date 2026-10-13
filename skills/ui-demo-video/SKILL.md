@@ -36,7 +36,7 @@ The one command validates the file (every problem at once), rehearses each
 take in seconds (a wrong target stops there, with the closest matches),
 records, lets the auto-camera write the zooms and callouts, renders, delivers,
 and prints what to look at. Run it again and it redoes only what changed: a
-caption, a trim or a camera edit records nothing (measured: 26 seconds for a
+caption, a trim or a camera edit records nothing (measured: 22 seconds for a
 34 second video).
 
 What to expect for a 30 to 45 s video with three takes: about two minutes for

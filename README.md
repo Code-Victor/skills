@@ -82,7 +82,7 @@ I measured one video on an Apple M2 Pro: 34 seconds at 1080p60, three takes.
 The earlier version of this skill needed about 10 minutes of machine time,
 spread across 17 or more separate agent steps (open a browser, record each
 take, direct the camera, check, render, deliver). The current version ran in
-103 seconds as one command. Changing a caption and running it again took 26
+85 seconds as one command. Changing a caption and running it again took 22
 seconds. That is one machine and one video, so treat it as an example, not a
 promise.
 
