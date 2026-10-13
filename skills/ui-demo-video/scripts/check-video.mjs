@@ -109,10 +109,10 @@ export function checkSpec(spec, { pub = '.', files = true, demo = false } = {}) 
     if (demo && take && src) return errors.push(`${at}: has both take "${take}" and src; use one`);
     if (!src) return;
     if (!exists(at, src) || !files) return;
-    if (/\.(png|jpe?g|webp)$/i.test(src)) return;
     const m = probe(src);
+    const still = /\.(png|jpe?g|webp)$/i.test(src);
     const end = (trim ?? 0) + sec * rate;
-    if (end > m.dur + 0.05)
+    if (!still && end > m.dur + 0.05)
       errors.push(`${at}: trim ${trim ?? 0}s + ${sec}s${rate !== 1 ? ` x${rate}` : ''} = ${end.toFixed(2)}s, clip is ${m.dur.toFixed(2)}s (the last frame would freeze)`);
     if (aspect && Math.abs(m.w / m.h - aspect) > 0.02)
       errors.push(`${at}: aspect ${aspect} but the clip is ${m.w}x${m.h} (${(m.w / m.h).toFixed(3)})`);
@@ -254,12 +254,11 @@ export function checkDemo(demo) {
         if (!s[side]?.take && !s[side]?.src) out.errors.push(`scene ${i}: split needs ${side}.take (or ${side}.src)`);
     }
   });
-  const aspects = Object.fromEntries(Object.keys(takes).map((n) => [n, 1.6]));
   const spec = checkSpec(demo, { demo: true, files: false });
   // checkSpec on the authored file already flags missing take/src; resolving
   // is only for the timeline total.
   let totalSec = spec.totalSec;
-  try { totalSec = sceneSpans(resolveSpec(demo, aspects)).totalSec; } catch {}
+  try { totalSec = sceneSpans(resolveSpec(demo)).totalSec; } catch {}
   return { errors: [...out.errors, ...spec.errors], warnings: [...out.warnings, ...spec.warnings], totalSec, scenes: spec.scenes };
 }
 

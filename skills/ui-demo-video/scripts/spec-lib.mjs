@@ -186,8 +186,10 @@ export const DEFAULTS = {
 
 // The video.json the renderers read: authoring keys stripped, `take` turned
 // into `src`, and aspect filled from the recording when the scene did not say.
-// `aspects` maps a take name to its width / height (unknown: 1.6, a stand-in
-// for static checks before anything has been recorded).
+// `aspects` maps a take name to its width / height. Where it is not known from
+// a recording (a clip or image given as `src`, or a take not recorded yet) the
+// aspect is left unset: compose.mjs probes the file itself, and the file check
+// compares only an aspect somebody actually wrote.
 export const resolveSpec = (demo, aspects = {}) => {
   const spec = {};
   for (const k of TOP_KEYS) if (demo[k] !== undefined) spec[k] = structuredClone(demo[k]);
@@ -204,12 +206,13 @@ export const resolveSpec = (demo, aspects = {}) => {
     if (s.type === 'split') {
       fill(s.before);
       fill(s.after);
-      s.aspect ??= s.before?._aspect ?? s.after?._aspect ?? 1.6;
+      const known = s.before?._aspect ?? s.after?._aspect;
+      if (s.aspect === undefined && known !== undefined) s.aspect = known;
       delete s.before?._aspect;
       delete s.after?._aspect;
     } else if (s.type === 'clip' || s.type === 'image') {
       fill(s);
-      s.aspect ??= s._aspect ?? 1.6;
+      if (s.aspect === undefined && s._aspect !== undefined) s.aspect = s._aspect;
       delete s._aspect;
     }
     return s;
