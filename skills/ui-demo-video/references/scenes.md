@@ -45,11 +45,11 @@ one of the takes defined in the same file, and a `split` names one per side.
 The runner turns it into `src: "clips/<name>.mp4"` and fills in `aspect` from
 the recording, so you leave `aspect` out. Use `src` instead of `take` for a
 file you made some other way (put it in the demo folder; see "Using an
-existing recording" in `demo-json.md`, which says why such a scene needs its
-own `aspect`). A scene has one or the other, never both.
+existing recording" in `demo-json.md`). A scene has one or the other, never
+both.
 
 An `image` scene shows a still, so it always takes `src` (a png or jpg
-in the demo folder) and an `aspect` by hand; a `take` there is an error.
+in the demo folder); a `take` there is an error.
 Make the still with `node scripts/capture.mjs shot --url <u> --out
 <demo folder>/shots/x.png`.
 
@@ -57,7 +57,7 @@ Make the still with `node scripts/capture.mjs shot --url <u> --out
 
 | Option | Does |
 |---|---|
-| `aspect` | The recording's width / height. The runner and `auto-camera.mjs` set it from the take's events file; an image, or a clip given by `src` with no events file, needs it by hand |
+| `aspect` | The recording's width / height. Leave it out: the runner sets it from the take, and for a file given by `src` the renderer reads it from the file. Write it only to force a different shape |
 | `tag`, `caption` | One caption under the frame, with a coloured label ("Before", "After") |
 | `captions` | `[{ "atSec", "text", "tag"? }]`: several in turn, for a scene that walks through steps. Each shows until the next |
 | `autoCamera` | `true` or options: let `scripts/auto-camera.mjs` write `moves` from the take's events file |

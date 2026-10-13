@@ -231,8 +231,7 @@ Rules that matter:
   touch). For native iOS and Android apps use the `argent-screen-recording`
   skill, and for desktop apps a QuickTime or `screencapture -v` recording:
   put the MP4 in the demo folder and use `"src": "clips/x.mp4"` on the scene
-  instead of `take`, with its `aspect` (width over height) set by hand, or the
-  check fails; without an events file, write `moves` by hand instead of
+  instead of `take`; without an events file, write `moves` by hand instead of
   `autoCamera`.
 - A still for an `image` scene: `node scripts/capture.mjs shot --url <u>
   --out <demo folder>/shots/x.png`.

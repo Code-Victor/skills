@@ -113,9 +113,10 @@ never changed. It adds:
 `Before` and `After` again.
 
 On each scene that has a `take`, it sets `src` to `clips/<take>.mp4` and
-removes `take`. A clip, image or split scene with no `aspect` gets the
-recording's own width over height, from the take's `take.json` (or its events
-file). `auto-camera` then writes `moves` and callout boxes into the same
+removes `take`. A scene with a take and no `aspect` gets the recording's own
+width over height, from the take's `take.json` (or its events file); a scene
+that names a file with `src` is left without one, and the renderer reads the
+shape from the file. `auto-camera` then writes `moves` and callout boxes into the same
 file. `transitions` has no default: a gap without an entry uses
 `transition`.
 
@@ -214,12 +215,12 @@ Put the MP4 in the demo folder and name it with `src`, relative to that
 folder:
 
 ```json
-{ "type": "clip", "src": "clips/walkthrough.mp4", "aspect": 1.778, "durationSec": 8,
+{ "type": "clip", "src": "clips/walkthrough.mp4", "durationSec": 8,
   "tag": "After", "caption": "The new settings page" }
 ```
 
-- Set `aspect` to the file's width over height. Without it the runner uses
-  1.6, and the `check` stage fails with `aspect 1.6 but the clip is ...`.
+- Leave `aspect` out: the renderer reads the shape from the file. If you do
+  write one and it does not match the file, the `check` stage says so.
 - With no `<file>.events.json` next to it, leave `autoCamera` off (it fails
   the `camera` stage) and write `moves` by hand.
 - A file that is not one of this skill's recordings (another codec, a
