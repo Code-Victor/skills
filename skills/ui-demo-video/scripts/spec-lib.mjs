@@ -78,9 +78,9 @@ export const CAPTURE_OPTIONS = {
 };
 // Options that only matter while recording; a rehearsal leaves them out.
 const RECORD_ONLY = new Set(['slow', 'lossless', 'fps', 'crf', 'jpegQuality', 'encoder']);
-export const TAKE_KEYS = ['url', 'duration', 'steps', 'setup', 'pageSetup', ...Object.keys(CAPTURE_OPTIONS)];
+export const TAKE_KEYS = ['url', 'duration', 'steps', 'setup', 'pageSetup', 'rehearse', ...Object.keys(CAPTURE_OPTIONS)];
 export const STEP_KEYS = ['wait', 'waitFor', 'move', 'click', 'type', 'key', 'scroll', 'eval', 'mark', 'camera', 'redact',
-  'dur', 'cps', 'instant', 'look', 'target', 'fatal'];
+  'dur', 'cps', 'instant', 'look', 'target', 'fatal', 'actionTimeout'];
 
 // ---------------------------------------------------------------- takes
 

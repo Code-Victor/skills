@@ -11,12 +11,12 @@
 //   1 validate   every static problem in the file, all at once, no browser
 //   2 chrome     make sure the background Chrome is up (scripts/chrome.sh)
 //   3 plan       which takes need recording: clip missing, take changed, --retake
-//   4 rehearse   dry-run those takes in parallel; a bad selector stops here, in
+//   4 rehearse   dry-run those takes; a bad selector stops here, in
 //                seconds, with the closest candidates, before any slow recording
-//   5 record     record them in parallel (each take's `setup` command first)
+//   5 record     record them, one at a time (each take's `setup` command first)
 //   6 camera     write build/video.json and run auto-camera on it
 //   7 check      trims against the real clip lengths, aspects, files
-//   8 render     scripts/compose.mjs (GPU), or assemble.mjs if compose is absent
+//   8 render     scripts/compose.mjs: the whole video on the GPU, in seconds
 //   9 deliver    PR copy, captions, chapters, poster, frozen/black scan
 //  10 summary    seconds per stage, what was reused, warnings, what to look at
 //
@@ -40,8 +40,11 @@
 //   --max-mb 10          size cap for the PR copy
 //   --gif <start:dur>    also a GIF excerpt, e.g. 12:6
 //   --port 9222          Chrome's debugging port
-//   --parallel 3         takes recorded at once. Use 1 when takes share state
-//                        that a `setup` resets (one database, one account)
+//   --parallel 1         takes rehearsed and recorded at once. Recording is
+//                        limited by the CPU, so more than 1 only helps on an
+//                        idle machine (three at once measured slower than one
+//                        after another), and takes that share state a `setup`
+//                        resets (one database, one account) must stay at 1
 //   --json               print the result as one JSON object (progress on stderr)
 //   --force              work in a folder under /tmp (macOS empties those on
 //                        restart; a whole day of recordings was lost that way)
@@ -78,7 +81,7 @@ const USAGE = `usage:
   demo.mjs init <dir> [--url <base>] [--name <name>] [--force]
   demo.mjs <demo.json> [--retake a,b|all] [--takes a,b] [--only capture|render|deliver]
                        [--no-deliver] [--no-rehearse] [--max-mb 10] [--gif start:dur]
-                       [--port 9222] [--parallel 3] [--json] [--force]
+                       [--port 9222] [--parallel 1] [--json] [--force]
 Read the top of this file for the stages and the folder layout. After you change
 the APP (not demo.json) use --retake: the fingerprint cannot see your code.`;
 if (opt.help || opt.h || !pos.length) {
@@ -176,7 +179,7 @@ if (pos[0] === 'init') {
 const demoFile = resolve(pos[0]);
 const dir = dirname(demoFile);
 const port = +(opt.port ?? 9222);
-const parallel = Math.max(1, +(opt.parallel ?? 3));
+const parallel = Math.max(1, +(opt.parallel ?? 1));
 const maxMb = +(opt['max-mb'] ?? 10);
 const stages = []; // { name, sec, note }
 const warnings = [];
@@ -239,17 +242,6 @@ const run = (log, cmd, args, { env = {}, cwd = dir, timeoutSec = 0 } = {}) =>
       const text = readFileSync(file, 'utf8');
       done({ code: code ?? (signal ? 128 : 1), file, text, timedOut });
     });
-  });
-// The dry run shrinks every wait to a fifth (at most half a second) and makes
-// glides instant, so a click on a panel that is still sliding in lands on the
-// wrong spot and the rehearsal fails where the real take would not. Give the
-// rehearsal the settling time the real glide and wait would have: any wait of
-// 0.3 s or more, and any click or glide, gets the full half second.
-const SETTLE = 2.5; // the dry run turns this into its 500 ms ceiling
-const rehearsalSteps = (steps) =>
-  steps.map((s) => {
-    const moves = (s.click || s.move) && (s.dur ?? 0.6) >= 0.4;
-    return moves || s.wait >= 0.3 ? { ...s, wait: Math.max(s.wait ?? 0, SETTLE) } : s;
   });
 const tail = (text, n = 12) => text.trim().split('\n').slice(-n).join('\n');
 const lastJson = (text) => {
@@ -381,24 +373,23 @@ if (doCapture) {
       return fail(st, [`${failed.length} of ${toRecord.length} take${toRecord.length === 1 ? '' : 's'} failed:`, ...lines], code);
     };
 
-    if (!opt['no-rehearse'] && toRecord.some((n) => takes[n].steps.length)) {
+    // A rehearsal really clicks. A take that changes data needs a `setup` that
+    // resets it, or `"rehearse": false` so the recording is the first run.
+    const rehearsable = (n) => takes[n].steps.length && takes[n].rehearse !== false;
+    if (!opt['no-rehearse'] && toRecord.some(rehearsable)) {
       await stage('rehearse', async () => {
-        const todo = toRecord.filter((n) => takes[n].steps.length);
-        const res = await pool(todo, parallel + 2, async (n) => {
+        const todo = toRecord.filter(rehearsable);
+        const res = await pool(todo, parallel, async (n) => {
           const s = await runSetup(n, `rehearse-${n}`);
           if (!s.ok) return s;
           const miss = join(paths.build, 'miss', n);
           mkdirSync(miss, { recursive: true });
-          const file = join(paths.steps, `${n}.rehearse.json`);
-          writeFileSync(file, `${JSON.stringify(rehearsalSteps(takes[n].steps), null, 1)}\n`);
           const r = await run(`rehearse-${n}`, process.execPath,
-            [join(HERE, 'capture.mjs'), ...captureArgs(takes[n], { rehearse: true, port, stepsFile: file, allowTemp: !!opt.force })],
+            [join(HERE, 'capture.mjs'), ...captureArgs(takes[n], { rehearse: true, port, stepsFile: stepsFile(n), allowTemp: !!opt.force })],
             { timeoutSec: 120, cwd: miss }); // a miss screenshot lands in build/miss/<take>/
           // The log holds the step, the target, the closest candidates and a
           // screenshot path; show it whole (it is short).
-          // The step it names is the author's, not the rehearsal's padded copy.
-          const body = r.text.split('\n').slice(1).join('\n').trim().split('\n').slice(-40).join('\n')
-            .replace(/^step (\d+): .*$/m, (m, i) => (takes[n].steps[i] ? `step ${i}: ${JSON.stringify(takes[n].steps[i])}` : m));
+          const body = r.text.split('\n').slice(1).join('\n').trim().split('\n').slice(-40).join('\n');
           return { ok: r.code === 0, code: r.code, text: r.timedOut ? 'rehearsal timed out' : body };
         });
         const failed = [...res].filter(([, r]) => !r.ok);
@@ -479,25 +470,11 @@ if (doRender) {
   const master = join(paths.out, `${name}.mp4`);
   const sheet = join(paths.out, `${name}-sheet.png`);
   await stage('render', async () => {
-    const compose = join(HERE, 'compose.mjs');
-    const hasCompose = existsSync(compose);
-    let note;
-    if (hasCompose) {
-      const r = await run('render', process.execPath, [compose, specPath, '--out', master, '--clips', dir, '--sheet', sheet, '--json'], { timeoutSec: 1800 });
-      const j = lastJson(r.text);
-      if (r.code !== 0 || j?.ok === false) return fail('render', [`compose.mjs exited ${r.code}${j?.error ? `: ${j.error}` : ''}`, tail(r.text)]);
-      for (const w of j?.warnings ?? []) warn(`render: ${w}`);
-      summary.renderer = 'compose';
-      note = j ? `compose: ${j.frames} frames in ${j.wallSec}s (${j.renderFps} fps)` : 'compose';
-    } else {
-      // compose.mjs has not landed: the ffmpeg quick path stands in (flat
-      // frames, fades and cuts; no camera moves or split scenes).
-      const r = await run('render', process.execPath, [join(HERE, 'assemble.mjs'), specPath, '--out', master, '--clips', dir, '--scale', '1'], { timeoutSec: 1800 });
-      if (r.code !== 0) return fail('render', [`assemble.mjs exited ${r.code}`, tail(r.text)]);
-      warn('rendered with assemble.mjs (scripts/compose.mjs is not installed): no camera moves, issue and list cards are plain titles');
-      summary.renderer = 'assemble';
-      note = 'assemble.mjs (ffmpeg quick path)';
-    }
+    const r = await run('render', process.execPath, [join(HERE, 'compose.mjs'), specPath, '--out', master, '--clips', dir, '--sheet', sheet, '--json'], { timeoutSec: 1800 });
+    const j = lastJson(r.text);
+    if (r.code !== 0 || j?.ok === false) return fail('render', [`compose.mjs exited ${r.code}${j?.error ? `: ${j.error}` : ''}`, tail(r.text)]);
+    for (const w of j?.warnings ?? []) warn(`render: ${w}`);
+    const note = j ? `${j.frames} frames in ${j.wallSec}s (${j.renderFps} fps)` : 'done';
     if (!existsSync(master)) return fail('render', `the renderer reported success but ${master} does not exist`);
     // The contact sheet of the finished video, if the renderer did not make one.
     if (!existsSync(sheet) || statSync(sheet).mtimeMs < Date.now() - 60000) {
