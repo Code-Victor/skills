@@ -6,7 +6,7 @@
 // and blurred.
 
 import { Easing, bezier, cameraAt, cameraTransform, interpolate, spring } from './motion.js';
-import { ID, accentOf, bandTop, sceneBox, splitBoxes, tagColorOf } from './plan.js';
+import { ID, accentOf, has, bandTop, sceneBox, splitBoxes, tagColorOf } from './plan.js';
 
 const SPRING = { damping: 200 };
 const clamp01 = (v) => Math.min(1, Math.max(0, v));
@@ -199,7 +199,7 @@ export class Scenes {
     const labels = [scene.before.label ?? 'Before', scene.after.label ?? 'After'];
     [0, 1].forEach((i) => {
       const enter = spring({ frame: local - i * 4, fps, config: SPRING });
-      this.piece(ID.piece(this.index, `l${i}`), { opacity: enter });
+      if (has(labels[i])) this.piece(ID.piece(this.index, `l${i}`), { opacity: enter });
       const b = boxes[i], tex = frames[i === 0 ? 'before' : 'after'];
       this.group(enter, 0, (1 - enter) * 16, () => {
         gl.quad(this.still(ID.shell(b, W * 0.008)).tex, this.rectOf(ID.shell(b, W * 0.008)));
@@ -217,9 +217,9 @@ export class Scenes {
     this.group(s0, 0, (1 - s0) * 14 * u, () => {
       this.piece(ID.card(i));
       const rise = (name, delay, alpha = 1) => { const v = s(delay); this.piece(ID.piece(i, name), { opacity: v * alpha, dy: (1 - v) * 14 * u }); };
-      rise('title', 0.15);
-      if (scene.quote) rise('quote', 0.45, 0.85);
-      if (scene.reporter) rise('reporter', 0.65, 0.55);
+      if (has(scene.title)) rise('title', 0.15);
+      if (has(scene.quote)) rise('quote', 0.45, 0.85);
+      if (has(scene.reporter)) rise('reporter', 0.65, 0.55);
     });
   }
   list(scene, local) {
@@ -227,14 +227,15 @@ export class Scenes {
     this.background();
     const at = (delay) => spring({ frame: local - Math.round(delay * fps), fps, config: SPRING });
     const h = at(0);
-    this.piece(ID.piece(i, 'head'), { opacity: h, dy: (1 - h) * 14 * u });
-    scene.items.forEach((_, k) => { const v = at(0.45 + k * 0.16); this.piece(ID.piece(i, `i${k}`), { opacity: v, dx: (1 - v) * -18 * u }); });
+    if (has(scene.title) || has(scene.subtitle)) this.piece(ID.piece(i, 'head'), { opacity: h, dy: (1 - h) * 14 * u });
+    (scene.items ?? []).forEach((_, k) => { const v = at(0.45 + k * 0.16); this.piece(ID.piece(i, `i${k}`), { opacity: v, dx: (1 - v) * -18 * u }); });
   }
   title(scene, local) {
     const { fps, W } = this, i = this.index, effect = scene.effect ?? 'soft-blur-in';
     this.background();
     const speed = 30 / fps;
-    if (effect === 'word-push') this.wordPush(scene, i, local * speed);
+    if (!has(scene.text)) { /* nothing to reveal */ }
+    else if (effect === 'word-push') this.wordPush(scene, i, local * speed);
     else if (effect === 'micro-scale-fade') {
       const e = bezier(0.32, 0.72, 0, 1), f = local * speed;
       this.piece(ID.piece(i, 'all'), { opacity: interpolate(f, [0, 18], [0, 1], { easing: e }), scale: interpolate(f, [0, 18], [0.96, 1], { easing: e }) });
@@ -248,7 +249,7 @@ export class Scenes {
         this.piece(ID.piece(i, `c${k}`), { opacity: interpolate(l, [0, 27], [0, 1], { easing: e }), dy: interpolate(l, [0, 9], [16, 0], { easing: e }), sigma: blur });
       });
     }
-    if (scene.subtitle) {
+    if (has(scene.subtitle)) {
       const sub = interpolate(local, [0.7 * fps, 1.2 * fps], [0, 1]);
       this.piece(ID.piece(i, 'sub'), { opacity: sub * 0.6, dy: (1 - sub) * 8 });
     }

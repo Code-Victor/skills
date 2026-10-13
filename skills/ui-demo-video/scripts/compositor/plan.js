@@ -14,7 +14,8 @@ export const ACCENT = '#3b6bff';
 export const FONT = "Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif";
 // remocn's title components read their font from this variable, then fall back.
 const REMOCN_FONT = 'var(--font-geist-sans), -apple-system, BlinkMacSystemFont, sans-serif';
-export const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+export const has = (v) => v !== undefined && v !== null && String(v) !== '';
+export const esc = (s) => (s === undefined || s === null ? '' : String(s)).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 const r2 = (v) => Math.round(v * 100) / 100;
 
 // ------------------------------------------------------------ layout
@@ -122,23 +123,23 @@ const titleJobs = (spec, scene, i) => {
   const shots = [];
   let inner;
   if (effect === 'word-push') {
-    const words = scene.text.trim().split(/\s+/).filter(Boolean);
+    const words = String(scene.text ?? '').trim().split(/\s+/).filter(Boolean);
     inner = `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;white-space:nowrap"><span style="font-size:${size}px;font-weight:600;color:${fg};letter-spacing:-0.02em;font-family:${REMOCN_FONT}">${
       words.map((w, k) => `<span data-p="w${k}" style="display:inline-block;white-space:pre;${k < words.length - 1 ? 'margin-right:0.22em' : ''}">${esc(w)}</span>`).join('')
     }</span></div>`;
     words.forEach((_, k) => shots.push(shot(ID.piece(i, `w${k}`), `[data-p="w${k}"]`, { pad: 12 })));
   } else if (effect === 'micro-scale-fade') {
     inner = `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center"><span data-p="all" style="font-size:${size}px;font-weight:600;color:${fg};letter-spacing:-0.03em;font-family:${REMOCN_FONT};display:inline-block">${esc(scene.text)}</span></div>`;
-    shots.push(shot(ID.piece(i, 'all'), '[data-p="all"]', { pad: 12 }));
+    if (has(scene.text)) shots.push(shot(ID.piece(i, 'all'), '[data-p="all"]', { pad: 12 }));
   } else {
-    const chars = Array.from(scene.text);
+    const chars = Array.from(String(scene.text ?? ''));
     inner = `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center"><span style="font-size:${size}px;font-weight:600;color:${fg};letter-spacing:-0.05em;font-family:${REMOCN_FONT}">${
       chars.map((c, k) => `<span data-p="c${k}" style="display:inline-block;white-space:pre">${esc(c)}</span>`).join('')
     }</span></div>`;
     // Blur is applied on the GPU per frame, so each glyph needs room around it for its halo.
     chars.forEach((c, k) => { if (c.trim()) shots.push(shot(ID.piece(i, `c${k}`), `[data-p="c${k}"]`, { pad: 44 })); });
   }
-  const sub = scene.subtitle
+  const sub = has(scene.subtitle)
     ? (shots.push(shot(ID.piece(i, 'sub'), '[data-p="sub"]', { pad: 8 })),
       `<div data-p="sub" style="font-size:${W * 0.0155}px;font-weight:500;color:${fg}">${esc(scene.subtitle)}</div>`)
     : '';
@@ -153,18 +154,18 @@ const issueJobs = (spec, scene, i) => {
   const rowId = (n) => ID.piece(i, n);
   const body = `<div class="af" style="align-items:center;justify-content:center;font-family:${FONT}">
     <div id="card" style="position:relative;width:${1040 * u}px;padding:${52 * u}px ${60 * u}px;border-radius:${28 * u}px;background:#fff;box-shadow:0 0 0 1px rgba(0,0,0,0.06),0 24px 70px rgba(0,0,0,0.16);display:flex;flex-direction:column;gap:${22 * u}px">
-      <div style="display:flex;align-items:center;gap:${14 * u}px;font-size:${24 * u}px;font-weight:600">
+      ${has(scene.source) || has(scene.id) || has(scene.status) ? `<div style="display:flex;align-items:center;gap:${14 * u}px;font-size:${24 * u}px;font-weight:600">` : '<div>'}
         ${scene.source ? `<span style="color:${fg};opacity:0.55">${esc(scene.source)}</span>` : ''}
         ${scene.id ? `<span style="color:${fg}">${esc(scene.id)}</span>` : ''}
         ${scene.status ? `<span style="margin-left:auto;padding:${6 * u}px ${14 * u}px;border-radius:999px;background:${accent}18;color:${accent};font-size:${21 * u}px">${esc(scene.status)}</span>` : ''}
       </div>
-      <div class="piece" data-p="title" style="font-size:${48 * u}px;font-weight:600;line-height:1.18;color:${fg};text-wrap:balance">${esc(scene.title)}</div>
+      ${has(scene.title) ? `<div class="piece" data-p="title" style="font-size:${48 * u}px;font-weight:600;line-height:1.18;color:${fg};text-wrap:balance">${esc(scene.title)}</div>` : ''}
       ${scene.quote ? `<div class="piece" data-p="quote" style="border-left:${4 * u}px solid ${spec.theme.tagColors?.Before ?? '#e5484d'};padding-left:${26 * u}px;font-size:${30 * u}px;line-height:1.45;color:${fg}">“${esc(scene.quote)}”</div>` : ''}
       ${scene.reporter ? `<div class="piece" data-p="reporter" style="font-size:${22 * u}px;color:${fg}">${esc(scene.reporter)}</div>` : ''}
     </div></div>`;
   const shots = [{ id: ID.card(i), rect: '#card', show: ['#card'], hide: ['.piece'], pad: 130 }];
   for (const n of ['title', 'quote', 'reporter'])
-    if (n === 'title' || scene[n]) shots.push({ id: rowId(n), rect: `[data-p="${n}"]`, show: [`[data-p="${n}"]`], hide: [], pad: 6 });
+    if (has(scene[n])) shots.push({ id: rowId(n), rect: `[data-p="${n}"]`, show: [`[data-p="${n}"]`], hide: [], pad: 6 });
   return [job(`issue${i}`, body, shots)];
 };
 
@@ -173,15 +174,15 @@ const listJobs = (spec, scene, i) => {
   const u = spec.width / 1920, fg = spec.theme.foreground, accent = accentOf(spec);
   const body = `<div class="af" style="align-items:center;justify-content:center;font-family:${FONT}">
     <div style="display:flex;flex-direction:column;gap:${30 * u}px;width:${1100 * u}px">
-      <div data-p="head">
-        <div style="font-size:${60 * u}px;font-weight:600;color:${fg};line-height:1.12">${esc(scene.title)}</div>
-        ${scene.subtitle ? `<div style="margin-top:${12 * u}px;font-size:${26 * u}px;font-weight:500;color:${fg};opacity:0.55">${esc(scene.subtitle)}</div>` : ''}
+      ${has(scene.title) || has(scene.subtitle) ? '<div data-p="head">' : '<div>'}
+        ${has(scene.title) ? `<div style="font-size:${60 * u}px;font-weight:600;color:${fg};line-height:1.12">${esc(scene.title)}</div>` : ''}
+        ${has(scene.subtitle) ? `<div style="${has(scene.title) ? `margin-top:${12 * u}px;` : ''}font-size:${26 * u}px;font-weight:500;color:${fg};opacity:0.55">${esc(scene.subtitle)}</div>` : ''}
       </div>
       <div style="display:flex;flex-direction:column;gap:${18 * u}px">
-        ${scene.items.map((it, k) => `<div data-p="i${k}" style="display:flex;align-items:center;gap:${18 * u}px;font-size:${32 * u}px;font-weight:500;color:${fg}">
+        ${(scene.items ?? []).map((it, k) => `<div data-p="i${k}" style="display:flex;align-items:center;gap:${18 * u}px;font-size:${32 * u}px;font-weight:500;color:${fg}">
           <svg width="${30 * u}" height="${30 * u}" viewBox="0 0 24 24" style="flex-shrink:0"><circle cx="12" cy="12" r="11" fill="${accent}1f"/><path d="M7 12.4l3.2 3.1L17 8.8" fill="none" stroke="${accent}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>${esc(it)}</div>`).join('')}
       </div></div></div>`;
-  const shots = [shot(ID.piece(i, 'head'), '[data-p="head"]', { pad: 6 }), ...scene.items.map((_, k) => shot(ID.piece(i, `i${k}`), `[data-p="i${k}"]`, { pad: 6 }))];
+  const shots = [...(has(scene.title) || has(scene.subtitle) ? [shot(ID.piece(i, 'head'), '[data-p="head"]', { pad: 6 })] : []), ...(scene.items ?? []).map((_, k) => shot(ID.piece(i, `i${k}`), `[data-p="i${k}"]`, { pad: 6 }))];
   return [job(`list${i}`, body, shots)];
 };
 
@@ -190,9 +191,9 @@ const splitJobs = (spec, scene, i) => {
   const boxes = splitBoxes(spec.width, spec.height, scene.aspect);
   const labels = [scene.before.label ?? 'Before', scene.after.label ?? 'After'];
   const jobs = [windowShell(spec, boxes[0], false), windowShell(spec, boxes[1], false)];
-  const body = labels.map((l, k) =>
+  const body = labels.map((l, k) => !has(l) ? '' :
     `<div data-p="l${k}" style="position:absolute;left:${boxes[k].left}px;top:${boxes[k].top - spec.height * 0.055}px;font-family:${FONT};font-size:${spec.width * 0.0135}px;font-weight:600;color:${spec.theme.tagColors?.[l] ?? spec.theme.foreground}">${esc(l)}</div>`).join('');
-  jobs.push(job(`split${i}`, body, labels.map((_, k) => shot(ID.piece(i, `l${k}`), `[data-p="l${k}"]`, { pad: 6 }))));
+  jobs.push(job(`split${i}`, body, labels.flatMap((l, k) => (has(l) ? [shot(ID.piece(i, `l${k}`), `[data-p="l${k}"]`, { pad: 6 })] : []))));
   return jobs;
 };
 
