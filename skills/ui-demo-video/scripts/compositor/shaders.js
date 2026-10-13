@@ -90,7 +90,7 @@ vec3 background(vec2 uv, vec2 px, float t){
   vec3 ground = mix(uCol[0], uCol[2], uv.y * uP[5]);
   vec2 p = px + vec2(uP[2] * t, uP[2] * t * .5);
   vec2 g = abs(fract(p / uP[0]) - .5) * uP[0];
-  float d = .5 * uP[0] - min(g.x, g.y);
+  float d = .5 * uP[0] - max(g.x, g.y);
   float m = 1. - smoothstep(uP[1] * .5 - .6, uP[1] * .5 + .6, d);
   float mask = mix(1., smoothstep(1.1, .2, length((uv - .5) * vec2(1.25, 1.)) * 1.6), uP[3]);
   return mix(ground, uCol[1], m * uP[4] * mask);

@@ -224,6 +224,13 @@ export class Scenes {
     } else if (scene.caption) this.caption(scene, pos, scene.tag, scene.caption, ql, total);
   }
 
+  /** Captions, through the window group's tilt/drift when they sit in the shell's own slot. */
+  slotCaptions(scene, local) {
+    const g = this.style.caption.placement === 'slot' ? this.groupXf : null, gl = this.gl, prev = gl.xf;
+    if (g) gl.setXf(prev ? mul(prev, g) : g);
+    this.captions(scene, local);
+    gl.setXf(prev);
+  }
   /** A blurred, tinted copy of what is behind `box`, inside a rounded rectangle. Needs the frame in an FBO (style.needsMain). */
   glass(box, g, opacity) {
     const gl = this.gl, main = this.main, u = this.u;
@@ -293,6 +300,7 @@ export class Scenes {
     gl.window(tex, win, botR, origin, [pp, pp], 1, { topR, prev });
     if (!full && (style.window.border || style.window.highlight)) { const rid = ID.ring(lay.outer, radiusOf(style, W)); gl.quad(this.still(rid).tex, this.rectOf(rid)); }
     this.callouts(scene, local, view, win, botR, topR, cam);
+    this.groupXf = xf ? (prevXf ? mul(prevXf, xf) : xf) : null;   // captions placed in the shell's own slot ride with it
     gl.setXf(prevXf);
   }
   rectOf(id) { const s = this.still(id); return { x: s.x, y: s.y, w: s.w, h: s.h }; }
@@ -357,13 +365,13 @@ export class Scenes {
     if (!this.shared) this.background();
     this.furniture(this.index);
     this.recording(scene, local, frames.main, mode);
-    this.captions(scene, local);
+    this.slotCaptions(scene, local);
   }
   image(scene, local, frames) {
     if (!this.shared) this.background();
     this.furniture(this.index);
     this.recording(scene, local, frames.main, 'flat');
-    this.captions(scene, local);
+    this.slotCaptions(scene, local);
   }
   split(scene, local, frames) {
     const { gl, W, H, fps, style } = this, boxes = splitBoxes(style, W, H, scene.aspect), ql = this.ql, R = radiusOf(style, W), M = style.motion.split;

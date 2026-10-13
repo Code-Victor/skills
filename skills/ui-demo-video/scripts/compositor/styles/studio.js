@@ -57,7 +57,7 @@ export default {
     align: 'center', size: 0.0135, offset: 0.05, inset: 0.03,   // size: fraction of W; offset: bottom gap when there is no band (H); inset: overlay gap (H)
     enter: 'fade', delay: 0.25, exit: 0.35, rise: 0.8,           // enter: fade|blur|rise|type; rise in caption heights
     blurPx: 12, blurSec: 0.22, typeCps: 30, caret: 'bar',         // blur: start radius and duration; type: chars/s; caret bar|block|none
-    color: '#fff', weight: 500,
+    color: '#fff', weight: 500, textShadow: null,     // textShadow: CSS text-shadow for bar and mono (plain has its own)
     pill: { gap: 0.7, padY: 0.55, padX: 1.05, radius: 999, background: 'rgba(17,17,20,0.92)', shadow: '0 1px 0 rgba(255,255,255,0.06) inset,0 8px 24px rgba(0,0,0,0.18)', border: null },
     glass: { gap: 0.7, padY: 0.6, padX: 1.1, radius: 999, blur: 18, tint: 'rgba(24,24,30,0.38)', saturate: 1.25, border: 'rgba(255,255,255,0.16)', shadow: '0 8px 30px rgba(0,0,0,0.25)' },
     plain: { shadow: '0 2px 3px rgba(0,0,0,0.5),0 4px 16px rgba(0,0,0,0.35)', rule: null, ruleColor: null },

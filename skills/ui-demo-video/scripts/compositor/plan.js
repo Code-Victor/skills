@@ -136,12 +136,12 @@ const captionBuilders = {
   },
   bar: (c) => {
     const k = c.style.caption, p = k.bar, size = c.size;
-    return captionFrame(c, `<div id="pill" style="display:inline-flex;flex-direction:column;gap:${size * 0.15}px;padding:${size * p.padY}px ${size * p.padX}px;border-left:${size * p.barWidth}px solid ${c.color};${p.background ? `background:${p.background};` : ''}font-family:${c.font('text')};font-size:${size}px;font-weight:${k.weight};line-height:1.25;color:${k.color};white-space:nowrap">
+    return captionFrame(c, `<div id="pill" style="display:inline-flex;flex-direction:column;gap:${size * 0.15}px;padding:${size * p.padY}px ${size * p.padX}px;border-left:${size * p.barWidth}px solid ${c.color};${p.background ? `background:${p.background};` : ''}font-family:${c.font('text')};font-size:${size}px;font-weight:${k.weight};line-height:1.25;color:${k.color};white-space:nowrap;${k.textShadow ? `text-shadow:${k.textShadow};` : ''}">
         ${c.tag ? `<span style="font-size:${p.tagSize}em;font-weight:${k.tag.weight};letter-spacing:0.08em;text-transform:none;color:${c.color}">${esc(c.tag)}</span>` : ''}<span data-type>${c.rich(c.text)}</span></div>`);
   },
   mono: (c) => {
     const k = c.style.caption, p = k.mono, size = c.size;
-    return captionFrame(c, `<div id="pill" style="display:inline-flex;align-items:baseline;gap:${size * 0.6}px;font-family:${c.font('mono')};font-size:${size}px;font-weight:${k.weight};line-height:1.3;color:${k.color};white-space:nowrap">
+    return captionFrame(c, `<div id="pill" style="display:inline-flex;align-items:baseline;gap:${size * 0.6}px;font-family:${c.font('mono')};font-size:${size}px;font-weight:${k.weight};line-height:1.3;color:${k.color};white-space:nowrap;${k.textShadow ? `text-shadow:${k.textShadow};` : ''}">
         <span style="color:${p.promptColor ?? c.accent}">${esc(p.prompt)}</span>${tagHtml(c, c.tag, c.color)}<span data-type>${c.rich(c.text)}</span></div>`);
   },
 };

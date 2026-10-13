@@ -331,7 +331,7 @@ const ensureFont = async (f) => {
   const key = fontKey(f), css = path.join(fontsDir, `${key}.css`), marker = path.join(fontsDir, `${key}.failed`);
   if (fs.existsSync(css)) return key;
   if (process.env.UI_DEMO_FONTS_OFFLINE) return null;
-  try { if (Date.now() - fs.statSync(marker).mtimeMs < 10 * 60_000) return null; } catch {}
+  try { if (Date.now() - fs.statSync(marker).mtimeMs < 10 * 60_000) { warn(`${f.family} is not downloaded (it failed a moment ago); text uses a fallback font`); return null; } } catch {}
   try {
     fs.mkdirSync(fontsDir, { recursive: true });
     const ua = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';

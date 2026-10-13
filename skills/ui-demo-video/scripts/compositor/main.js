@@ -114,6 +114,7 @@ async function run() {
   };
 
   const clipIdx = spec.scenes.map((_, k) => k).filter((k) => Object.keys(needs(spec.scenes[k])).length);
+  const ambientLoads = new Map();
   const ambientFor = async (i, n, frames) => {
     const own = frames[i].main ?? frames[i].before;
     if (own) return own;
@@ -122,10 +123,14 @@ async function run() {
     if (prev !== undefined && rt[prev].tex[firstKey(prev)]?.last) return rt[prev].tex[firstKey(prev)];   // hold the clip before: its last frame
     const next = clipIdx.find((k) => k > i);
     if (next === undefined) return undefined;
-    await openScene(next, n);                                                                             // else the clip after: its first frame
-    const key = firstKey(next), tex = rt[next].tex[key];
-    if (!tex.last) gl.video(tex, await rt[next].src[key].get(needs(spec.scenes[next])[key].trim * 1e6));
-    return tex;
+    // one load per clip however many scenes ask at once (two decoders reads on one source would fight)
+    if (!ambientLoads.has(next)) ambientLoads.set(next, (async () => {
+      await openScene(next, n);
+      const key = firstKey(next), tex = rt[next].tex[key];
+      if (!tex.last) gl.video(tex, await rt[next].src[key].get(needs(spec.scenes[next])[key].trim * 1e6));
+      return tex;
+    })());
+    return ambientLoads.get(next);
   };
 
   // ---- frame loop ----
