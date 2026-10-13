@@ -55,7 +55,7 @@ const T0 = Date.now();
 
 const BOOLEAN = new Set([
   'allow-temp', 'sheet', 'hide-floating', 'mobile', 'no-cursor', 'no-ripple', 'dark', 'dry-run', 'json',
-  'lossless', 'no-guard', 'recalibrate', 'allow-redirect',
+  'lossless', 'no-guard', 'recalibrate', 'allow-redirect', 'no-retry',
 ]);
 const [mode, ...rest] = process.argv.slice(2);
 const args = {};
@@ -121,6 +121,8 @@ Options:
   --no-guard             let the page see the real mouse (default: pointer
                          events the script didn't send are dropped)
   --allow-redirect       don't stop when the page ends on another origin
+  --no-retry             one attempt only: an empty or choppy take is reported (the
+                         JSON summary carries suggestedSlow), never re-recorded here
   --json                 print a one-line JSON summary instead of the last line
   --dark                 emulate prefers-color-scheme: dark`);
   process.exit(2);
@@ -358,6 +360,7 @@ const rehearse = DRY || mode === 'scout';
 const events = [];
 const path = []; // the drawn cursor, sample by sample
 const motion = []; // [wall start, wall end] of every stretch the cursor was moving
+const glides = []; // each glide as planned: wall start, seconds, from, to
 let pos = [0, 0];
 let pressed = false;
 let shape = 'arrow';
@@ -366,20 +369,43 @@ const ease = (k) => (k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2);
 
 // The pointer: the drawn cursor is told where it is by this script, in the
 // same breath as the synthetic event is dispatched.
+const inflight = new Set();
+let moveError = null;
+const track = (promise) => {
+  const p = promise.catch((e) => { moveError ??= e; });
+  inflight.add(p);
+  p.finally(() => inflight.delete(p));
+};
+// Wait for the pipelined moves of a glide to land.
+const settleMoves = async () => {
+  await Promise.all([...inflight]);
+  if (moveError) { const e = moveError; moveError = null; throw e; }
+};
+const record = (type, x, y) => {
+  // About 60 samples a second is plenty for drawing it again later.
+  const now = Date.now() / 1000;
+  const prev = path.at(-1);
+  if (prev && type === 'mouseMoved' && (now - prev.wall) / SLOW < 0.0155) return null;
+  const sample = { wall: now, x, y, shape, pressed };
+  path.push(sample);
+  return sample;
+};
+const shapeOf = (r, sample) => {
+  const v = r?.result?.value;
+  if (typeof v === 'string') { shape = v; if (sample) sample.shape = v; }
+};
+const cursorCall = (call, x, y) => send('Runtime.evaluate', {
+  expression: `window.__cap_cursor_api ? __cap_cursor_api.${call}(${x}, ${y}) : null`, returnByValue: true,
+});
+// Clicks and key moments are sequential: the cursor is announced, then the
+// event is sent, so the page can tell the script's event from a stray one.
 const mouse = async (type, x, y) => {
   const call = type === 'mouseMoved' ? 'move' : type === 'mousePressed' ? 'down' : 'up';
   if (type === 'mousePressed') pressed = true;
   if (type === 'mouseReleased') pressed = false;
   if (cursorOn) {
-    const r = await send('Runtime.evaluate', {
-      expression: `window.__cap_cursor_api ? __cap_cursor_api.${call}(${x}, ${y}) : null`, returnByValue: true,
-    }).catch(() => null);
-    if (typeof r?.result?.value === 'string') shape = r.result.value;
-    // About 60 samples a second is plenty for drawing it again later.
-    const now = Date.now() / 1000;
-    const prev = path.at(-1);
-    if (!prev || type !== 'mouseMoved' || shape !== prev.shape || (now - prev.wall) / SLOW >= 0.0155)
-      path.push({ wall: now, x, y, shape, pressed });
+    const sample = record(type, x, y);
+    shapeOf(await cursorCall(call, x, y).catch(() => null), sample);
   }
   await send('Input.dispatchMouseEvent', {
     type, x, y,
@@ -387,11 +413,19 @@ const mouse = async (type, x, y) => {
     clickCount: type === 'mouseMoved' ? 0 : 1,
   });
 };
+// Glide steps are pipelined: Input.dispatchMouseEvent only answers when the
+// page has taken the event, about a frame later, so waiting for each one capped
+// the steps at roughly one per vsync of wall time and starved the slots. The
+// announce goes first; a move the page's guard happens to drop only costs a
+// hover update, and the next step carries on.
+const moveStep = (x, y) => {
+  if (cursorOn) {
+    const sample = record('mouseMoved', x, y);
+    track(cursorCall('allow', x, y).then((r) => shapeOf(r, sample)));
+  }
+  track(send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'none', clickCount: 0 }));
+};
 
-// A point from {x, y} or {selector, at: [fx, fy]}, where fractions are of the
-// element's box and may go outside 0..1 to point around it.
-// Elements that mount a beat later (a sheet sliding in, a menu opening) are
-// waited for, up to 5 s of page time but never more than 10 s of wall time.
 // A target is acted on only once it is actionable: it exists, is visible and
 // holds still for two animation frames. The wait is bounded in wall time (5 s,
 // longer when the clock is slowed; a step can set "actionTimeout" in seconds)
@@ -437,17 +471,22 @@ const moveTo = async ([x, y], sec) => {
   }
   // A step every STEP_MS of page time, twice per output frame, so a step lands
   // in every 1/60 s slot even when one runs late. The glide follows the clock,
-  // not a step count: a slow round trip costs a frame, never length.
+  // not a step count: a late step costs a frame, never length.
   const w0 = Date.now() / 1000;
   const t0 = pageNow();
+  glides.push({ w0, sec, from: [x0, y0], to: [x, y] });
+  // The drawn cursor glides inside the page; the steps below are the synthetic
+  // mouse events (hover, :hover transitions, drags) that follow the same path.
+  if (cursorOn) track(send('Runtime.evaluate', { expression: `window.__cap_cursor_api && __cap_cursor_api.glide(${x0}, ${y0}, ${x}, ${y}, ${sec})` }));
   for (;;) {
     const e = (pageNow() - t0) / sec;
     const k = ease(Math.min(1, e));
     pos = [x0 + (x - x0) * k, y0 + (y - y0) * k];
-    await mouse('mouseMoved', ...pos);
+    moveStep(...pos);
     if (e >= 1) break;
     await pageUntil(t0 + (Math.floor(((pageNow() - t0) * 1000) / STEP_MS) + 1) * STEP_MS / 1000);
   }
+  await settleMoves();
   motion.push([w0, Date.now() / 1000]);
 };
 
@@ -671,7 +710,7 @@ const startSink = ({ file, nullOut = false }) => {
       pending.push(frame);
       pending.sort((x, y) => x.ts - y.ts);
       while (pending.length > REORDER) await emit(pending.shift());
-    }).catch((e) => { failure = e; }));
+    }).catch((e) => { failure = e; die(e.message); }));
     // The ack is what lets Chrome send the next frame, so it waits for ffmpeg
     // to have taken what is due: backpressure, not a growing queue.
     mine.then(() => send('Page.screencastFrameAck', { sessionId }).catch(() => {}));
@@ -743,7 +782,7 @@ const measureRate = async () => {
   SLOW = 1;
   const probe = startSink({ file: '', nullOut: true });
   await probe.begin();
-  await sleep(2200);
+  await sleep(1500);
   await probe.end(0).catch(() => {});
   const stamped = probe.times.slice();
   SLOW = savedSlow;
@@ -796,6 +835,41 @@ const paintStats = (times, windows) => {
   return { fps: n / total, coverage: Math.min(fps, slots.size / total) };
 };
 
+// What the eye sees: for each output frame inside a glide where the cursor
+// should have moved at least one device pixel since the previous frame (the
+// script knows its own planned path), is the frame on screen a newer one than
+// the frame before? The cursor is animated in the page on every rendered
+// frame, so any newer frame shows a newer position. A frame that repeats while
+// the cursor should have moved is a held frame; several in a row is a stutter.
+// A slot with no new frame is only a defect when the page should have
+// changed, which is exactly what this asks.
+const heldStats = (times, plans, toVideo) => {
+  const slotsOf = times.map((t) => Math.round(t * fps));
+  const frameAt = (k) => { // the frame on screen in slot k: the latest at or before it
+    let lo = 0, hi = slotsOf.length - 1, best = -1;
+    while (lo <= hi) { const m = (lo + hi) >> 1; if (slotsOf[m] <= k) { best = m; lo = m + 1; } else hi = m - 1; }
+    return best;
+  };
+  let expected = 0, held = 0, longest = 0;
+  for (const g of plans) {
+    const gs = toVideo(g.w0);
+    const ideal = (t) => {
+      const k = ease(Math.min(1, Math.max(0, (t - gs) / g.sec)));
+      return [g.from[0] + (g.to[0] - g.from[0]) * k, g.from[1] + (g.to[1] - g.from[1]) * k];
+    };
+    // The first and last 15% of an eased glide move less than a pixel a frame.
+    const k0 = Math.ceil((gs + g.sec * 0.15) * fps), k1 = Math.floor((gs + g.sec * 0.85) * fps);
+    let run = 0;
+    for (let k = k0; k <= k1; k++) {
+      const a = ideal((k - 1) / fps), b = ideal(k / fps);
+      if (Math.hypot(b[0] - a[0], b[1] - a[1]) * scale < 1) continue;
+      expected++;
+      if (frameAt(k) === frameAt(k - 1)) { held++; run++; longest = Math.max(longest, run); } else run = 0;
+    }
+  }
+  return expected < 8 ? null : { heldPct: (100 * held) / expected, longest, expected };
+};
+
 let clockId = null;
 let cursorId = null;
 
@@ -803,6 +877,7 @@ const takeOnce = async () => {
   events.length = 0;
   path.length = 0;
   motion.length = 0;
+  glides.length = 0;
   pos = [width * 0.9, height * 0.92];
   pressed = false;
   shape = 'arrow';
@@ -821,9 +896,20 @@ const takeOnce = async () => {
   await sink.begin();
   takeClock.start = Date.now();
   await send('Page.navigate', { url: args.url });
-  // A take that has not finished well past its length is stuck.
+  // A take that has not finished well past its length is stuck. --duration is
+  // only a floor: the steps can run longer, so the limit follows the longer of
+  // the two (the steps' own waits and glides, in page time, plus the wall-time
+  // bound of every waitFor).
+  let stepsPageSec = 0, stepsWallSec = 0;
+  for (const st of steps) {
+    stepsPageSec += (st.wait ?? 0) + (st.move ? (st.dur ?? 0.8) : 0) + (st.click ? (st.dur ?? 0.6) + 0.1 : 0) +
+      (st.type && !st.instant ? (st.type.length / (st.cps ?? 14)) * 1.5 : 0) + (st.scroll ? (st.dur ?? 0.8) : 0);
+    if (st.waitFor) stepsWallSec += Math.min((st.waitFor.timeout ?? 8) * SLOW, 30);
+    stepsWallSec += st.actionTimeout ?? Math.min(Math.max(5, 2.5 * SLOW), 10); // one target wait per step, at worst
+  }
+  const limitSec = Math.max(durationSec, stepsPageSec) * SLOW * 1.5 + stepsWallSec + 90;
   const watchdog = setTimeout(() => die(`the take ran ${((Date.now() - takeClock.start) / 1000).toFixed(0)} s of wall time and is not finished (stuck step?)`),
-    (durationSec * SLOW * 1.5 + 90) * 1000);
+    limitSec * 1000);
   const stepsRun = runSteps();
   stepsRun.catch(() => {});
   const failed = new Promise((_, rej) => stepsRun.catch(rej));
@@ -855,14 +941,19 @@ if (AUTO) SLOW = await pickSlowFor();
 
 let take;
 let retriedSlower = false;
+const noRetry = !!args['no-retry'];
 for (let attempt = 1; ; attempt++) {
+  // Every attempt starts from a fresh page and the --setup reset again: a take
+  // that creates or deletes data must not meet its own leftovers. (The first
+  // attempt just did it, above.)
+  if (attempt > 1) await warmUp();
   take = await takeOnce().catch(async (e) => {
     if (e instanceof StepError) throw e;
     await die(e?.message ?? String(e));
   });
   // A screencast occasionally delivers nothing (tab not composited yet): retry.
   if (take.times.length === 0) {
-    if (attempt >= 3) await die('empty take: the screencast produced no frames (tab not painting?)');
+    if (noRetry || attempt >= 3) await die('empty take: the screencast produced no frames (tab not painting?)');
     console.error(`attempt ${attempt}: no frames, retrying`);
     continue;
   }
@@ -870,11 +961,15 @@ for (let attempt = 1; ; attempt++) {
   const stats = paintStats(take.times, motion.map(([s, e]) => [toVideo(s), toVideo(e)]));
   take.fpsDistinct = stats ? stats.fps : null;
   take.coverage = stats ? stats.coverage : null;
-  // Never hand back a choppy clip silently.
-  if (take.coverage !== null && take.coverage < 50 && AUTO && !retriedSlower) {
+  take.held = heldStats(take.times, glides, toVideo);
+  // Never hand back a stuttering clip silently. Retry only when the glides
+  // really show held frames, not merely because some slots had no new frame.
+  const choppy = take.held && (take.held.heldPct > 35 || take.held.longest >= 6);
+  take.suggestedSlow = choppy ? Math.min(10, Math.ceil(SLOW * 1.6 * 2) / 2) : null;
+  if (choppy && AUTO && !retriedSlower && !noRetry) {
     retriedSlower = true;
-    const slower = Math.min(10, Math.ceil(SLOW * Math.min(2, (60 / Math.max(take.coverage, 8)) * 1.1) * 2) / 2);
-    console.error(`only ${take.coverage.toFixed(0)} of 60 frame slots a second had a new frame at ${SLOW}x; retrying at ${slower}x`);
+    const slower = take.suggestedSlow;
+    console.error(`${take.held.heldPct.toFixed(0)}% of glide frames were held (longest run ${take.held.longest}) at ${SLOW}x; retrying at ${slower}x`);
     rmSync(tmpOut, { force: true });
     SLOW = slower;
     continue;
@@ -887,11 +982,12 @@ const wantW = Math.round(width * scale);
 if (take.size[0] < wantW * 0.98)
   warn(`frames are ${take.size[0]}px wide, not ${wantW}: this Chrome renders at ${(take.size[0] / width).toFixed(1)}x. ` +
     `Restart it at that scale (SCALE=${scale} scripts/chrome.sh --stop; SCALE=${scale} scripts/chrome.sh) or pass --scale ${(take.size[0] / width).toFixed(0)}`);
-if (take.coverage !== null && take.coverage < 54)
-  warn(`only ${take.coverage.toFixed(0)} of 60 frame slots a second had a new frame during motion (${take.fpsDistinct.toFixed(0)} distinct frames a second): the clip may look choppy${AUTO ? '' : ' (try --slow auto, or a larger --slow)'}`);
+if (take.held && (take.held.heldPct > 25 || take.held.longest >= 4))
+  warn(`${take.held.heldPct.toFixed(0)}% of the frames in cursor glides repeat the one before (longest run ${take.held.longest}): the cursor may look jerky${take.suggestedSlow ? ` (record again with --slow ${take.suggestedSlow})` : AUTO ? '' : ' (try --slow auto, or a larger --slow)'}`);
 if (take.dropped > take.times.length * 0.05) warn(`${take.dropped} stale screencast frame(s) dropped`);
 
 renameSync(tmpOut, out);
+rmSync(`${out}.miss.png`, { force: true }); // left by an earlier failed attempt
 const bytes = statSync(out).size;
 
 // Times in video seconds; positions as fractions of the frame, so the file
@@ -911,6 +1007,7 @@ const cursor = path.map((p) => ({
 const head = JSON.stringify({
   width, height, duration: +take.endSec.toFixed(3), fps, slow: SLOW,
   ...(take.fpsDistinct !== null ? { distinctFps: +take.fpsDistinct.toFixed(1), frameCoverage: +take.coverage.toFixed(1) } : {}),
+  ...(take.held ? { heldFramePct: +take.held.heldPct.toFixed(1), longestHeldRun: take.held.longest } : {}),
   events: timeline,
 }, null, 1);
 const eventsFile = `${out}.events.json`;
@@ -933,6 +1030,6 @@ await succeed(
   `saved ${out} (${fw}x${fh}, ${take.endSec.toFixed(1)}s, ${dist} distinct fps, slow ${SLOW}x, ${(bytes / 1e6).toFixed(1)} MB, wall ${wallSec().toFixed(1)}s)`,
   {
     file: out, events: eventsFile, width: fw, height: fh, durationSec: +take.endSec.toFixed(2),
-    distinctFps: take.fpsDistinct === null ? null : +take.fpsDistinct.toFixed(1), frameCoverage: take.coverage === null ? null : +take.coverage.toFixed(1), paintedFrames: take.times.length, slow: SLOW, bytes,
+    distinctFps: take.fpsDistinct === null ? null : +take.fpsDistinct.toFixed(1), frameCoverage: take.coverage === null ? null : +take.coverage.toFixed(1), heldFramePct: take.held ? +take.held.heldPct.toFixed(1) : null, suggestedSlow: take.suggestedSlow,  longestHeldRun: take.held ? take.held.longest : null, paintedFrames: take.times.length, slow: SLOW, bytes,
   },
 );

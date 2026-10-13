@@ -170,16 +170,42 @@ export const cursorScript = ({ scale, ripple, guard }) => `(() => {
     if (cur === 'text' || (el && el.matches('input:not([type=checkbox]):not([type=radio]), textarea, [contenteditable=""], [contenteditable=true]'))) return 'text';
     return 'arrow';
   };
-  const place = (x, y) => {
+  // Working out the shape means a hit test and a style read, which flushes
+  // layout; doing it on every 8 ms step costs the page main thread more than
+  // the step is worth, so it is redone every 50 ms (and always on a click).
+  let shapeAt = -1e9;
+  const place = (x, y, force, announce = true) => {
     last = [x, y];
-    allowed.push(last);
-    if (allowed.length > 6) allowed.shift();
-    setShape(kind(x, y));
+    if (announce) {
+      allowed.push(last);
+      if (allowed.length > 6) allowed.shift();
+    }
+    const now = performance.now();
+    if (force || shape === '' || now - shapeAt > 50) {
+      shapeAt = now;
+      setShape(kind(x, y));
+    }
     const el = ensure();
     const [, , hx, hy] = shapes[shape];
     el.style.display = 'block';
     el.style.translate = (x - hx * S) + 'px ' + (y - hy * S) + 'px';
     return shape;
+  };
+  // A glide is animated here, one position per rendered frame on the (slowed)
+  // page clock, not by one CDP round trip per step: a late step from the
+  // script can no longer leave a frame showing the cursor where it was.
+  let glideId = 0;
+  const glide = (x0, y0, x1, y1, sec) => {
+    const id = ++glideId;
+    const t0 = performance.now();
+    const tick = () => {
+      if (id !== glideId) return;
+      const e = Math.min(1, (performance.now() - t0) / (sec * 1000));
+      const k = e < 0.5 ? 4 * e * e * e : 1 - Math.pow(-2 * e + 2, 3) / 2;
+      place(x0 + (x1 - x0) * k, y0 + (y1 - y0) * k, false, false);
+      if (e < 1) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
   };
   // The page can change under a still pointer (a button that disappears
   // after its click); re-check the shape the way the OS pointer would.
@@ -205,14 +231,19 @@ export const cursorScript = ({ scale, ripple, guard }) => `(() => {
   };
   Object.defineProperty(window, '__cap_cursor_api', {
     value: {
-      move: (x, y) => place(x, y),
+      move: (x, y) => { glideId++; return place(x, y); },
+      // The script says where its synthetic event is about to land (so the
+      // guard lets it through); the drawing is the glide's business.
+      allow: (x, y) => { allowed.push([x, y]); if (allowed.length > 6) allowed.shift(); return shape; },
+      glide,
       down: (x, y) => {
-        const s = place(x, y);
+        glideId++;
+        const s = place(x, y, true);
         ensure().style.scale = '0.86';
         if (${!!ripple}) ring(x, y);
         return s;
       },
-      up: () => { ensure().style.scale = '1'; },
+      up: () => { glideId++; ensure().style.scale = '1'; },
     },
   });
   // The person's own mouse: a real pointer over a visible window sends events
