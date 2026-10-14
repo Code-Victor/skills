@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Validate a video.json (or an authored demo.json) before a render.
 //
-//   node scripts/check-video.mjs <video.json | demo.json> [--public <dir>] [--static]
+//   node scripts/check-video.mjs <video.json | demo.json> [--public <dir>] [--static] [--style <name>]
 //
 // A render takes minutes; a bad trim, a missing clip or a camera key past the
 // end of its scene only shows up at the end of it. This takes a second. Exit
@@ -12,7 +12,8 @@
 //   - a demo.json (the authored file demo.mjs runs, see references) is checked
 //     statically, with no clips and no browser: every problem at once, so the
 //     file can be fixed in one pass before anything is recorded;
-//   - --static checks a video.json without looking at any file.
+//   - --static checks a video.json without looking at any file;
+//   - --style <name> checks the camera as that style frames it (compose.mjs --style).
 //
 // The checks are plain functions (checkSpec, checkDemo) so demo.mjs runs the
 // same ones in-process.
@@ -25,7 +26,8 @@ import {
   fillTiming, gapSec, isNote, resolveSpec, sceneSpans, styleName, takesUsed, STYLE_KEYS,
 } from './spec-lib.mjs';
 import { STYLES, TOKEN_GROUPS, flatten, resolveStyle, styleNames, unknownStyleMessage } from './compositor/styles/index.js';
-import { stripEmphasis } from './compositor/layout.js';
+import { cameraPose, sceneLayout, stripEmphasis } from './compositor/layout.js';
+import { cameraTransform, makeCameraEase } from './compositor/motion.js';
 
 // Reading speed: 20 characters a second is the ceiling Netflix sets for adult
 // subtitles (15 to 17 reads comfortably); anything needs about 1.5 s.
@@ -65,6 +67,7 @@ const media = (path) => {
  *          writes (moves, callout boxes) is not required yet
  *   demo   the spec is an authored demo.json: scenes may say `take` for `src`,
  *          and authoring keys are allowed
+ *   style  a style name that replaces the spec's (compose.mjs --style), for the camera check
  * Returns { errors, warnings, totalSec, scenes }.
  */
 const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
@@ -78,7 +81,38 @@ export function checkSpec(spec, opts = {}) {
     return wrongShape(e);
   }
 }
-function checkSpecInner(spec, { pub = '.', files = true, demo = false } = {}) {
+// A callout circles something the viewer should see: if the camera is elsewhere
+// for more than this long while it shows (its box mostly off the frame), say so.
+const OFF_FRAME_SEC = 0.3;
+/**
+ * Seconds a callout's box is mostly (more than half) outside what the viewer sees, under the scene's
+ * camera: the window in inside mode, the frame in fill mode (through the fill camera). Sampled at 30 Hz.
+ */
+export const calloutOffFrame = (spec, style, scene, c) => {
+  const W = spec.width ?? 1920, H = spec.height ?? 1080, fps = spec.fps ?? 60, ease = makeCameraEase(style.camera?.ease);
+  const lay = sceneLayout({ ...spec, width: W, height: H }, style, scene);
+  if (!lay) return 0;
+  const view = lay.view, [x, y, w, h] = c.box, from = c.atSec, to = c.atSec + (c.forSec ?? style.callout?.forSec ?? 2.5), step = 1 / 30;
+  let off = 0;
+  for (let t = from; t < to - 1e-9; t += step) {
+    const { cam, xf } = cameraPose({ ...spec, width: W, height: H }, style, scene, t * fps, fps, ease);
+    let b, see;
+    if (xf) {
+      b = [xf.tx + xf.z * (view.left + x * view.w), xf.ty + xf.z * (view.top + y * view.h), xf.z * w * view.w, xf.z * h * view.h];
+      see = [0, 0, W, H];
+    } else {
+      const k = cameraTransform(cam, view.w, view.h);
+      b = [view.left + k.tx + x * view.w * k.z, view.top + k.ty + y * view.h * k.z, w * view.w * k.z, h * view.h * k.z];
+      see = [view.left, view.top, view.w, view.h];
+    }
+    const ix = Math.max(0, Math.min(b[0] + b[2], see[0] + see[2]) - Math.max(b[0], see[0]));
+    const iy = Math.max(0, Math.min(b[1] + b[3], see[1] + see[3]) - Math.max(b[1], see[1]));
+    if (ix * iy < 0.5 * b[2] * b[3]) off += step;
+  }
+  return off;
+};
+
+function checkSpecInner(spec, { pub = '.', files = true, demo = false, style: styleFlag } = {}) {
   const out = { errors: [], warnings: [] };
   const { errors, warnings } = out;
   const probe = (src) => media(join(pub, src));
@@ -243,6 +277,17 @@ function checkSpecInner(spec, { pub = '.', files = true, demo = false } = {}) {
         errors.push(`${at}: camera ${k}=${mv[k]} must be a fraction 0..1`);
     }
     if (s.callouts !== undefined && !Array.isArray(s.callouts)) errors.push(`${at}: callouts must be a list`);
+    // A callout drawn where the camera is not looking circles nothing the viewer sees.
+    if (Array.isArray(s.moves) && s.moves.length && Array.isArray(s.callouts) && Number.isFinite(s.durationSec)) {
+      let st = null;
+      try { st = resolveStyle(spec, styleFlag); } catch { /* a bad style is reported above */ }
+      for (const c of st ? s.callouts : []) {
+        if (!isObj(c) || !Array.isArray(c.box) || c.box.length !== 4 || !Number.isFinite(c.atSec) || !s.moves.every(isObj)) continue;
+        const off = calloutOffFrame(spec, st, s, c), len = c.forSec ?? st.callout?.forSec ?? 2.5;
+        if (off > OFF_FRAME_SEC + 1e-9)
+          warnings.push(`${at}: callout${c.mark ? ` "${c.mark}"` : c.label ? ` "${c.label}"` : ''} is mostly outside the frame for ${off.toFixed(1)}s of its ${(+len).toFixed(1)}s: the camera is elsewhere while it shows. Let auto-camera frame it (a callout's mark is always a camera target), or move it or the camera keys`);
+      }
+    }
     for (const c of Array.isArray(s.callouts) ? s.callouts : []) {
       if (!isObj(c)) { errors.push(`${at}: a callout is an object like { "mark": "toast" }`); continue; }
       const name = c.mark ? ` "${c.mark}"` : '';
@@ -356,7 +401,7 @@ function checkDemoInner(demo) {
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   const [file, ...rest] = process.argv.slice(2);
   if (!file) {
-    console.error('usage: check-video.mjs <video.json | demo.json> [--public <dir>] [--static]');
+    console.error('usage: check-video.mjs <video.json | demo.json> [--public <dir>] [--static] [--style <name>]');
     process.exit(2);
   }
   const flag = (n) => {
@@ -377,7 +422,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
     // Default: a Remotion project (src/video.json -> ../public), else next to the file.
     const guess = resolve(dirname(file), '..', 'public');
     const pub = resolve(flag('public') ?? (existsSync(guess) ? guess : dirname(file)));
-    r = checkSpec(spec, { pub, files: !rest.includes('--static') });
+    r = checkSpec(spec, { pub, files: !rest.includes('--static'), style: flag('style') });
   }
   for (const w of r.warnings) console.log(`warn  ${w}`);
   for (const e of r.errors) console.log(`error ${e}`);
