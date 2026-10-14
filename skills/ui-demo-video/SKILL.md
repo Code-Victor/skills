@@ -162,7 +162,7 @@ record. `scripts/demo.mjs init` writes a valid starter;
         { "click": { "selector": "input[aria-label='Email address']" }, "dur": 0.7 },
         { "type": "jordan.lee+demo@example.com", "cps": 22 },
         { "click": { "text": "Send invite" }, "dur": 0.7 },
-        { "mark": "sent-toast", "target": { "selector": "[data-sonner-toast]" }, "look": false },
+        { "mark": "sent-toast", "target": { "selector": "[data-sonner-toast]" } },
         { "wait": 1.8 },
         { "move": { "x": 900, "y": 640 }, "dur": 0.8 }
       ]
@@ -185,7 +185,10 @@ A take is a URL and a list of steps (`references/steps.md` has every step).
 The ones that make directing easy:
 
 - `{ "mark": "toast", "target": {...} }` notes where something is, for a
-  callout or for the camera to look at.
+  callout or for the camera to look at. Mark the result of an action (the
+  toast after a save) and the camera goes to it. A mark a callout uses is
+  always framed; `"look": false` only keeps the camera off a mark nothing
+  circles.
 - `{ "camera": "wide" }` right after a click that opens a drawer, dialog or
   page, so the auto-camera pulls back to show it whole.
 - `{ "waitFor": {...} }` instead of guessing how long a load takes.
@@ -248,8 +251,12 @@ guide is `references/scenes.md`.
 **The auto-camera** (`"autoCamera": true` on a clip) pushes in about 1.8x as
 the cursor acts, follows each action inside a shot, holds 2 s, pulls out at
 `"camera": "wide"` steps and scrolls, and skips pushes that would wobble or
-twitch. Check it on the sheet; hand-tune a scene by replacing `autoCamera`
-with your own `moves`.
+twitch. Cause, then effect: after a click or typing it stays on the action
+for 0.6 s, then moves to its result (a marked toast, anything a callout
+circles) and holds it while the callout shows, or frames both when they fit
+one view. A pan to something more than a view away flies on a smooth path
+that pulls out a little on the way. Check it on the sheet; hand-tune a scene
+by replacing `autoCamera` with your own `moves`.
 
 **The look** is a top-level `"style"`. No `style` means `studio`. Pick by
 audience, then say it in one line (`"style": "editorial"`):
@@ -446,7 +453,7 @@ D=~/Downloads/<name>-demo
 node scripts/capture.mjs clip --url <u> --out $D/clips/x.mp4 --duration 8 --steps steps.json --sheet
 node scripts/capture.mjs clip --url <u> --steps steps.json --dry-run     # rehearse only
 node scripts/auto-camera.mjs $D/build/video.json --public $D             # moves and callouts from the takes
-node scripts/check-video.mjs $D/build/video.json --public $D             # trims, aspects, files, reading speed
+node scripts/check-video.mjs $D/build/video.json --public $D             # trims, aspects, files, reading speed, callouts off camera
 node scripts/compose.mjs $D/build/video.json --clips $D --out $D/out/x.mp4 --sheet $D/out/x-sheet.png
 node scripts/deliver.mjs $D/out/x.mp4 --spec $D/build/video.json --max-mb 10
 ```

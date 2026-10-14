@@ -31,7 +31,8 @@
         { "type": "jordan.lee+demo@example.com", "cps": 22 },
         { "click": { "text": "Send invite" }, "dur": 0.7 },
         { "waitFor": { "selector": "[data-sonner-toast]" } },
-        { "mark": "sent-toast", "target": { "selector": "[data-sonner-toast]" }, "look": false },
+        { "mark": "sent-toast", "target": { "selector": "[data-sonner-toast]" },
+          "_note": "The result of Send invite. The camera stays on the button for a moment, then moves here, and the callout circles it. Leave look alone: \"look\": false is only for a mark that nothing circles and the camera should not move to (one you use to time a caption by hand)." },
         { "wait": 1.8 },
         { "move": { "x": 900, "y": 640 }, "dur": 0.8 }
       ]

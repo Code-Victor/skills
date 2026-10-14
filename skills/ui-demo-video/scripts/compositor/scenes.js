@@ -13,7 +13,7 @@
 //            background, so a dark style never flashes white and an animated
 //            background never pulses.
 
-import { Easing, bezier, cameraAt, cameraTransform, fillTransform, interpolate, makeCameraEase, seeded, spring } from './motion.js';
+import { Easing, bezier, cameraAt, cameraTransform, fillPose, interpolate, makeCameraEase, seeded, spring } from './motion.js';
 import { ID, accentOf, cameraModeOf, chipKey, effectOf, emChars, emWords, has, captionPos, markSize, placeOf, radiusOf, sceneLayout, shellTag, splitBoxes, tagColorOf } from './layout.js';
 import { rgb01 } from './color.js';
 import { backgroundParams, backgroundProgram, transitionProgram } from './shaders.js';
@@ -399,13 +399,13 @@ export class Scenes {
   }
   /**
    * Fill mode: the camera does not crop inside the window, it moves the WHOLE window (shell and its shadow,
-   * the recording, the ring, the callouts) through fillTransform over the fixed background: the window grows
+   * the recording, the ring, the callouts) through fillPose over the fixed background: the window grows
    * until the recording fills the frame. Radius and shadow grow with it; the corners square off as the first
    * side reaches the frame's edge and the ring fades with them, so no background shows at a covered edge.
    */
   filled(scene, local, tex) {
     const { gl, spec, style, W, H } = this, lay = sceneLayout(spec, style, scene), view = lay.view, win = snap(view), R = radiusOf(style, W);
-    const pose = (f) => fillTransform(cameraAt(scene.moves, f, this.fps, this.camEase), view, W, H);
+    const pose = (f) => fillPose(scene.moves, f, this.fps, this.camEase, view, W, H);
     const F = pose(local);
     this.fillNow = F.fill;
     const sc = Math.max(view.w / tex.w, view.h / tex.h), pp = 1 / sc;
@@ -807,7 +807,7 @@ export class Scenes {
     const lay = sceneLayout(this.spec, this.style, scene);
     if (lay.full) return 0;
     if (cameraModeOf(this.spec, this.style, scene) !== 'fill') return 1;
-    const t = clamp01(fillTransform(cameraAt(scene.moves, a.local, this.fps, this.camEase), lay.view, this.W, this.H).fill / 0.35);
+    const t = clamp01(fillPose(scene.moves, a.local, this.fps, this.camEase, lay.view, this.W, this.H).fill / 0.35);
     return 1 - t * t * (3 - 2 * t);
   }
   logo(n) {
