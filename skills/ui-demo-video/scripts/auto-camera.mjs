@@ -219,7 +219,7 @@ const movesFor = (scene, ev, o, callouts) => {
         at({ atSec: arrive - pan, ...here(cause, s.zoom) });
         at({ atSec: arrive, ...here(it, s.zoom) });
         for (const c of it.callouts) timeCallout(c, arrive - CALLOUT_LEAD);
-        holdEnd = Math.max(holdEnd, arrive + o.hold * (it.callouts.length ? 0 : 1));
+        if (!it.callouts.length) holdEnd = Math.max(holdEnd, arrive + o.hold);
         hold(it, arrive);
         lastKey = it;
         continue;
