@@ -386,8 +386,8 @@ const ensureFont = async (f) => {
 };
 const ensureFonts = async () => {
   const seen = new Map();
-  // A role only the callout labels use (studio's `hand`) is loaded only when a callout draws a label with it: an extra web
-  // font on the capture page moves Chrome's raster of a CSS gradient by a level, so a video without one keeps its pixels.
+  // A role only the callout labels use (studio's `hand`) is downloaded and loaded only when a callout draws a label with it,
+  // so a video without one fetches and lays out exactly what it did before.
   const labelRole = style.callout?.label?.kind === 'chip' ? null : style.callout?.label?.font;
   const labelled = spec.scenes.some((sc) => (sc.callouts ?? []).some((c) => c.label && c.box && !isLegacyCallout(calloutKind(style, c))));
   for (const [role, f] of Object.entries(style.fonts)) if (f.family && (['text', 'display', 'mono'].includes(role) || (role === labelRole && labelled))) seen.set(fontKey(f), f);
