@@ -152,10 +152,12 @@ const enclosing = (p, q, extra) => {
 };
 /**
  * The paths of one annotation round `rect` ({ x, y, w, h }, px), in drawing order: renderAnnotation's switch.
- * opts: padding (px), iterations, brackets, seed, stepCount (circle: pin the point count), capPx (the circle's radius jitter cap).
+ * opts: padding (px), iterations, brackets, seed, stepCount (circle: pin the point count), capPx (the circle's radius jitter cap),
+ * bounds { x0, y0, x1, y1 } (the recording, in rect's px) and margin: a circle near the recording's edge is moved in, and
+ * flattened only if it must, so its loop never runs off the picture (unbound, it is exactly the enclosing circle).
  * Returns { paths: [[[x, y]...]...], width (highlight: the band's width, else null), steps }.
  */
-export const notationPaths = (type, rect, { padding = 5, iterations = 2, brackets = ['right'], seed = 1, stepCount, capPx = 5, inkWidth = 4 } = {}) => {
+export const notationPaths = (type, rect, { padding = 5, iterations = 2, brackets = ['right'], seed = 1, stepCount, capPx = 5, inkWidth = 4, bounds = null, margin = 0 } = {}) => {
   const P = [padding, padding, padding, padding], o = roughOpts(seed, 'single'), ops = [];
   let width = null, steps = null;
   const alt = (fn) => { for (let i = 0; i < iterations; i++) ops.push(i % 2 ? fn(true) : fn(false)); };
@@ -186,10 +188,17 @@ export const notationPaths = (type, rect, { padding = 5, iterations = 2, bracket
     }
     case 'circle': {
       // enclose the padded rect; the radius jitter (curveFitting) is capped to capPx so a big circle cannot dip into it
-      const p = rect.w / 2 + P[1], q = rect.h / 2 + P[0], { a, b } = enclosing(p, q, inkWidth / 2 + 2);
+      const p = rect.w / 2 + P[1], q = rect.h / 2 + P[0];
+      let { a, b } = enclosing(p, q, inkWidth / 2 + 2), cx = rect.x + rect.w / 2, cy = rect.y + rect.h / 2;
+      if (bounds) {
+        // keep the loop on the picture: room for the radius jitter and the stroke, then move the centre in, flatten last
+        const e = margin + capPx, fitAxis = (c, r, lo, hi) => { const rr = Math.max(1, Math.min(r, (hi - lo) / 2 - e)); return [Math.min(Math.max(c, lo + e + rr), hi - e - rr), rr]; };
+        [cx, a] = fitAxis(cx, a, bounds.x0, bounds.x1);
+        [cy, b] = fitAxis(cy, b, bounds.y0, bounds.y1);
+      }
       const fit = (r) => Math.min(0.05, capPx / (1.5 * Math.max(r, 1)));
       const d = roughOpts(seed, 'double', { curveFitting: 1 - fit(Math.max(a, b)) }), s = roughOpts(seed, 'single', { curveFitting: 1 - fit(Math.max(a, b)) });
-      const cx = rect.x + rect.w / 2, cy = rect.y + rect.h / 2, full = Math.floor(iterations / 2), single = iterations - full * 2;
+      const full = Math.floor(iterations / 2), single = iterations - full * 2;
       for (let i = 0; i < full; i++) { const e = ellipse(cx, cy, a * 2, b * 2, d, stepCount); steps = e.steps; ops.push(e.ops); }
       for (let i = 0; i < single; i++) { const e = ellipse(cx, cy, a * 2, b * 2, s, stepCount); steps = e.steps; ops.push(e.ops); }
       break;
@@ -481,7 +490,8 @@ export const annotationJobs = (spec, style, scene, index, ci, c, { kind, builder
   for (const L of met.slice(0, MAX_LEVELS)) {
     const S = LEVEL ** L, rect = { x: 0, y: 0, w: c.box[2] * v.w * S, h: c.box[3] * v.h * S };
     if (builderMark) { const e = (K.pad ?? 8) * u; levels.push({ L, S, ext: { above: e, below: e, left: e, right: e } }); continue; }
-    const g = notationPaths(kind, rect, { padding: pad, iterations, brackets, seed, stepCount: steps, capPx: 5 * u, inkWidth: ink.width });
+    const bounds = { x0: -c.box[0] * v.w * S, y0: -c.box[1] * v.h * S, x1: (1 - c.box[0]) * v.w * S, y1: (1 - c.box[1]) * v.h * S };
+    const g = notationPaths(kind, rect, { padding: pad, iterations, brackets, seed, stepCount: steps, capPx: 5 * u, inkWidth: ink.width, bounds, margin: half + 2 });
     if (steps === undefined && g.steps) steps = g.steps;
     const width = g.width ?? ink.width, m = width / 2 + (hl ? 0 : ink.casing?.width ?? 0) + 3;
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
