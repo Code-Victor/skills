@@ -2,9 +2,10 @@
 
 A style is the look of the finished video: the ground, the window around the
 recording, the type, the captions, the cards, the callouts, how things move
-and how scenes join. The scenes, takes and camera are the same in every
-style; only how they are drawn changes. There are five, and `studio` is the
-default.
+and how scenes join. The scenes, takes and camera moves are the same in every
+style; only how they are drawn changes (including how a zoom frames the
+recording: see "How the camera frames the recording"). There are five, and
+`studio` is the default.
 
 Styles belong to the default renderer (`scripts/compose.mjs`). The Remotion
 renderer ignores them and always draws the studio look.
@@ -16,7 +17,7 @@ about it and a line about what it suits (`--json` for data).
 
 | Style | The idea | Right choice when | Cost |
 |---|---|---|---|
-| `studio` | The original: a soft light gradient, a white window, dark pill captions | You are unsure, or the video goes into Slack, a PR or docs. Your own `theme` colours apply | The safe default, so the least distinctive |
+| `studio` | A soft light gradient, a big white window that a zoom grows until the recording fills the frame, dark pill captions | You are unsure, or the video goes into Slack, a PR or docs. Your own `theme` colours apply | The safe default, so the least distinctive |
 | `midnight` | Depth and light: a near-black stage with a slow pool of cool grey light, glass captions | Launches, dark-mode products, anything that should feel premium | A light app is a bright slab on a dark stage; pacing is slower (0.7 s transitions) |
 | `editorial` | Type and stillness: warm paper, ink, hairline rules, a serif, margin notes | Changelogs, weekly updates, writing-led explanations | The least showy. The recording is smaller (at most 74% of the width) to leave room for the margin note |
 | `terminal` | A terminal session about the change: mono type, typed text, stepped motion | Developer tools, pull-request demos for engineers | Reads as cold for a consumer product. Typed text needs time to finish |
@@ -43,14 +44,57 @@ different: the clips are the same files.
   `midnight`), so the video's length changes by a fraction of a second
   between styles.
 
+## How the camera frames the recording
+
+`studio` and `midnight` **fill**. At rest the recording sits in a big window
+(84% of the height: a 16:10 recording is about 76% of the width, a 16:9 one
+84%) with a slim strip under it for one caption line. When the camera zooms,
+the whole window grows over the background, shadow and corners with it, and
+slides toward what the camera looks at, until the recording fills the frame:
+from about 1.2x (16:9) or 1.3x (16:10) no background shows, and the corners
+square off as the window reaches the edge. This is how Cap and Screen Studio
+zoom, and how most launch videos look: full-bleed most of the time, the framed
+wide shot brief. The logo steps aside as the window grows.
+
+`editorial`, `terminal` and `sketch` frame **inside**: the window stays where
+it is and the zoom crops inside it, because the page, the terminal window and
+the pinned print are their look.
+
+To change it for one video, put `"camera": "inside"` (or `"fill"`) at the top
+of the spec; for one clip or image scene, put it on the scene. A
+`frame: "full"` clip, a split and the cards never change.
+
+**Captions over the recording.** Once a zoom fills the frame, the caption sits
+over the recording. Both fill styles give it a plate that holds 4.5:1 or
+better over a white page and a black one, for the text and for the tag colours
+(studio's dark pill at 92%, midnight's dark glass; a tag colour that would
+fall short on the plate is lifted, `caption.tagContrast`). A style forced to
+fill whose captions have no plate gets a soft scrim behind them while the
+recording covers them. Where the caption goes is decided once per caption,
+before the render: if its spot in the strip would sit on or within 6% of the
+action (a callout that is showing, where the camera looks while zoomed in, a
+click or typing in the take) for more than 0.2 s, it sits at the top
+title-safe line instead, for its whole time on screen. The render prints the
+captions it moved.
+
+**The earlier studio framing** (the zoom inside an 80% window, 26 px captions,
+tag colours as given) is one override; it renders frame for frame what studio
+drew before fill existed:
+
+```json
+"style": { "preset": "studio", "overrides": {
+  "camera": { "mode": "inside" },
+  "window": { "maxWidth": 0.9, "maxHeight": 0.8, "top": 0.055, "radius": 0.008 },
+  "caption": { "size": 0.0135, "tagContrast": null } } }
+```
+
 ## studio
 
-What the viewer sees: a pale gradient ground, the recording in a white
-rounded window with a soft shadow, a dark pill caption under the window, Inter
-type, a ticket card for the issue, a check list at the end. Titles blur in.
-The camera glides on an ease curve. The default transition is `zoom-blur`
-(0.5 s). It is the look the skill had before styles existed, drawn the same
-way.
+What the viewer sees: a pale gradient ground, the recording in a big white
+rounded window with a soft shadow, a dark pill caption in the strip under the
+window, Inter type, a ticket card for the issue, a check list at the end.
+Titles blur in. A zoom grows the window until the recording fills the frame,
+gliding on an ease curve. The default transition is `zoom-blur` (0.5 s).
 
 Colours: `theme.background`, `foreground`, `accent` and `tagColors` all
 apply. Defaults are a blue accent, red for `Before` and blue for `After`.
@@ -60,7 +104,8 @@ apply. Defaults are a blue accent, red for `Before` and blue for `After`.
 What the viewer sees: a near-black ground with one slow pool of cool grey
 light behind the window, a little film grain and a soft vignette. The window
 is dark-filled with a gradient hairline and a faint cool glow, and drifts in
-about 3% over each scene so no frame is still. Captions are dark glass under
+about 3% over each scene so no frame is still; a zoom grows it until the
+recording fills the frame, as in `studio`. Captions are dark glass under
 the window with a small mono tag (`After` is a filled chip, other tags are
 outlined). Titles are large, tight Geist type that resolves out of blur, with
 a quiet mono subtitle. The issue card is dark glass; the end list is hairline
@@ -264,7 +309,7 @@ checked by rendering a still:
 
 | Want | Override |
 |---|---|
-| Bigger captions in `midnight` (the default is 0.0158 of the width) | `{ "caption": { "size": 0.022 } }` |
+| Smaller captions in `midnight` (the default is 0.0187 of the width) | `{ "caption": { "size": 0.016 } }` |
 | No slow push-in on the window in `midnight` | `{ "window": { "drift": null } }` |
 | No dot grid in `terminal` | `{ "canvas": { "background": { "opacity": 0 } } }` |
 
@@ -303,8 +348,9 @@ render in a style therefore needs the network once.
 - The Remotion renderer ignores `style` and draws the studio look.
 - `frame: "stage"` still falls back to a flat window, with a warning, in every
   style.
-- A style does not change what is recorded, the scene types or the camera
-  logic, only how they are drawn. The auto-camera runs once per style, so its
-  moves can differ by a fraction of a second.
+- A style does not change what is recorded, the scene types or where the
+  camera looks, only how they are drawn (fill or inside is part of that). The
+  auto-camera runs once per style, so its moves can differ by a fraction of a
+  second.
 - `midnight`, `editorial`, `terminal` and `sketch` ignore `theme.background`
   and `theme.foreground`.

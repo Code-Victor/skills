@@ -88,6 +88,7 @@ with `_` or `$`, or is called `comment` or `notes`, is ignored.
 | `takes` | object | `{}` | Take name to take. Names follow the same character rule as `name`, because they name the clip files |
 | `scenes` | list | required | The scenes. Types and options: `scenes.md` |
 | `style` | string or object | `studio` | The look of the video: `"midnight"`, or `{ "preset": "midnight", "overrides": { "caption": { "size": 0.022 } } }`. See "Style" below and `styles.md` |
+| `camera` | `"fill"` or `"inside"` | the style's | How a zoom frames the recordings: `fill` grows the whole window until the recording fills the frame (`studio`, `midnight`), `inside` crops inside a fixed window (`editorial`, `terminal`, `sketch`). A clip or image scene may set its own. See `styles.md` |
 | `theme`, `transition`, `transitionSec`, `transitions`, `music` | | see below | The same as in a `video.json` |
 | `width`, `height`, `fps` | number | 1920, 1080, 60 | The size and frame rate of the finished video (not of the recording) |
 
@@ -318,8 +319,9 @@ matter most are in the summary at the end of a good run too:
   glide frames that repeated): something heavy was running, or the page is
   too heavy for 2x. Record it again on an idle machine, or raise `slow`
 - `hideFloating` with toast-like words in the steps and no `keep`
-- a caption that cannot be read in the time it is on screen (more than 20
-  characters a second, or under 1.5 s)
+- a caption that cannot be read in the time it is on screen (more than 17
+  characters a second, or under 1.5 s), or longer than 42 characters a line
+  or two lines
 - a transition that eats more than half of a scene
 - `frame: "stage"` (renders flat; see `remotion-remocn.md`)
 - more than 90 s of video
