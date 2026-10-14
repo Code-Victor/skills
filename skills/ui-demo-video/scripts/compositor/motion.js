@@ -160,9 +160,11 @@ export const seeded = (seed, ...keys) => {
 // pan-zoom path ("Smooth and efficient zooming and panning", 2003): it pulls out on the way and back in
 // on the one eased parameter, so the target comes into view early and there is no stop in the middle.
 // A view is { x, y, w }: its centre, and its size as a fraction of the space it moves in (w = 1 / zoom),
-// x and y in the same fractions, so "one view" is w along either axis.
+// x and y in the same fractions, so "one view" is w along either axis. "Far" is measured between the
+// keys' focus points (what the camera was asked to look at); the path runs between the views the
+// camera really shows there (kept inside the recording), which can be closer.
 const RHO = 1.4;    // how far the path pulls out: higher pulls out more (the paper's comfortable 1.4)
-const FAR = 1;      // two keys further apart than this many views (along x or y) take the path
+const FAR = 1;      // two keys whose focus points are further apart than this many views (along x or y) take the path
 const vwPlan = (a, b, rho) => {
   const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy), r2 = rho * rho, w0 = a.w, w1 = b.w;
   const r0 = -Math.asinh((w1 * w1 - w0 * w0 + r2 * r2 * d * d) / (2 * w0 * r2 * d));
@@ -176,9 +178,13 @@ const vwAt = (p, k) => {
   return { x: p.a.x + p.dx * u, y: p.a.y + p.dy * u, w: (p.w0 * Math.cosh(p.r0)) / Math.cosh(s) };
 };
 const farPlans = new Map();
-/** The far pan from view a to view b, as k (0..1, the eased time) -> view; null when the two are not both zoomed in and far apart. */
-export const farPath = (a, b) => {
-  if (a.w > 0.95 || b.w > 0.95 || Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y)) <= FAR * Math.max(a.w, b.w)) return null;
+/**
+ * The far pan from view a to view b, as k (0..1, the eased time) -> view; null unless both are zoomed in
+ * and their focus points `fa`, `fb` ({ x, y }, default the views' centres) are more than a view apart.
+ */
+export const farPath = (a, b, fa = a, fb = b) => {
+  if (a.w > 0.95 || b.w > 0.95 || Math.max(Math.abs(fb.x - fa.x), Math.abs(fb.y - fa.y)) <= FAR * Math.max(a.w, b.w)) return null;
+  if (Math.hypot(b.x - a.x, b.y - a.y) < 1e-4) return null;
   const key = [a.x, a.y, a.w, b.x, b.y, b.w].join();
   let p = farPlans.get(key);
   if (!p) {
@@ -210,7 +216,7 @@ export const cameraAt = (moves, frame, fps, ease = CAMERA_EASE) => {
     if (t <= keys[i].atSec) {
       const a = at(keys[i - 1]), b = at(keys[i]);
       const k = ease((t - keys[i - 1].atSec) / Math.max(0.001, keys[i].atSec - keys[i - 1].atSec));
-      const far = farPath(insideView(a), insideView(b));
+      const far = farPath(insideView(a), insideView(b), a, b);
       if (far) { const v = far(k); return { x: v.x, y: v.y, zoom: 1 / v.w }; }
       return { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k, zoom: a.zoom + (b.zoom - a.zoom) * k };
     }
@@ -249,13 +255,14 @@ export const cameraTransform = (cam, w, h) => {
  */
 export const fillPose = (moves, frame, fps, ease = CAMERA_EASE, view, W, H) => {
   const keys = [...(moves ?? [])].sort((a, b) => a.atSec - b.atSec);
+  const focus = (k) => ({ x: (view.left + (k.x ?? 0.5) * view.w) / W, y: (view.top + (k.y ?? 0.5) * view.h) / H });
   const solve = (k) => {
-    const z = Math.max(1, k.zoom ?? 1);
-    const axis = (lo, size, C, f) => {
+    const z = Math.max(1, k.zoom ?? 1), f = focus(k);
+    const axis = (lo, size, C, fc) => {
       const h = C / (2 * z), cl = (v, a, b) => Math.min(b, Math.max(a, v));
-      return h <= size / 2 ? cl(f, lo + h, lo + size - h) : cl(lo + size / 2, h, C - h);
+      return h <= size / 2 ? cl(fc, lo + h, lo + size - h) : cl(lo + size / 2, h, C - h);
     };
-    return { x: axis(view.left, view.w, W, view.left + (k.x ?? 0.5) * view.w) / W, y: axis(view.top, view.h, H, view.top + (k.y ?? 0.5) * view.h) / H, w: 1 / z };
+    return { x: axis(view.left, view.w, W, f.x * W) / W, y: axis(view.top, view.h, H, f.y * H) / H, w: 1 / z };
   };
   const t = frame / fps;
   let v = { x: 0.5, y: 0.5, w: 1 };
@@ -266,7 +273,7 @@ export const fillPose = (moves, frame, fps, ease = CAMERA_EASE, view, W, H) => {
       if (t > keys[i].atSec) continue;
       const a = solve(keys[i - 1]), b = solve(keys[i]);
       const k = ease((t - keys[i - 1].atSec) / Math.max(0.001, keys[i].atSec - keys[i - 1].atSec));
-      const far = farPath(a, b);
+      const far = farPath(a, b, focus(keys[i - 1]), focus(keys[i]));
       if (far) v = far(k);
       else { const za = 1 / a.w, zb = 1 / b.w; v = { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k, w: 1 / (za + (zb - za) * k) }; }
       break;
