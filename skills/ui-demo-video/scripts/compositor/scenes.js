@@ -550,17 +550,19 @@ export class Scenes {
       if (ar) boxes.push({ x0: ax - ar.ax / res, y0: ay - ar.ay / res, x1: ax + (ar.w - ar.ax) / res, y1: ay + (ar.h - ar.ay) / res });
       if (L) boxes.push({ x0: lx, y0: ly, x1: lx + ls.bw, y1: ly + ls.bh });
       const mg = 4 * u, vx0 = Math.max(0, bounds.x) + mg, vy0 = Math.max(0, bounds.y) + mg, vx1 = Math.min(W, bounds.x + bounds.w) - mg, vy1 = Math.min(H, bounds.y + bounds.h) - mg;
+      // while the camera has the anchor out of view, arrow and label fade (over 24 px of travel): they would point at nothing
+      const off = Math.max(vx0 - ax, ax - vx1, vy0 - ay, ay - vy1, 0), seen = clamp01(1 - off / (24 * u)), op = exit * seen;
       const ux0 = Math.min(...boxes.map((b) => b.x0)), uy0 = Math.min(...boxes.map((b) => b.y0)), ux1 = Math.max(...boxes.map((b) => b.x1)), uy1 = Math.max(...boxes.map((b) => b.y1));
       const sdx = ux0 < vx0 ? vx0 - ux0 : ux1 > vx1 ? Math.max(vx1 - ux1, vx0 - ux0) : 0, sdy = uy0 < vy0 ? vy0 - uy0 : uy1 > vy1 ? Math.max(vy1 - uy1, vy0 - uy0) : 0;
       ax += sdx; ay += sdy; lx += sdx; ly += sdy;
       gl.setXf(null);
-      if (ar) gl.ink(this.still(ar.id).tex, this.still(`${ar.id}#t`).tex, { x: ax - ar.ax / res, y: ay - ar.ay / res, w: ar.w / res, h: ar.h / res }, { opacity: exit, progress: clamp01((t - T.arrowAt) / Math.max(1e-3, T.arrowSec)) });
+      if (ar && op > 0.001) gl.ink(this.still(ar.id).tex, this.still(`${ar.id}#t`).tex, { x: ax - ar.ax / res, y: ay - ar.ay / res, w: ar.w / res, h: ar.h / res }, { opacity: op, progress: clamp01((t - T.arrowAt) / Math.max(1e-3, T.arrowSec)) });
       const tl = t - T.labelAt;
-      if (L && tl >= 0) {
+      if (L && tl >= 0 && op > 0.001) {
         const e = Easing.out(Easing.cubic)(clamp01(tl / T.labelSec)), rise = (1 - e) * L.rise * (side === 'below' ? -1 : 1);
-        if (L.glass) this.glass({ x: lx, y: ly + rise, w: ls.bw, h: ls.bh }, { ...style.caption.glass, radius: L.glass.radius }, e * exit);
-        if (L.enter === 'type') this.appear(L.id, 'type', tl, { opacity: exit }, { dx: lx - ls.bx, dy: ly - ls.by, cps: L.cps, caret: 'none', fade: exit });
-        else this.piece(L.id, { opacity: e * exit, dx: lx - ls.bx, dy: ly - ls.by + rise, noJit: true });
+        if (L.glass) this.glass({ x: lx, y: ly + rise, w: ls.bw, h: ls.bh }, { ...style.caption.glass, radius: L.glass.radius }, e * op);
+        if (L.enter === 'type') this.appear(L.id, 'type', tl, { opacity: op }, { dx: lx - ls.bx, dy: ly - ls.by, cps: L.cps, caret: 'none', fade: op });
+        else this.piece(L.id, { opacity: e * op, dx: lx - ls.bx, dy: ly - ls.by + rise, noJit: true });
       }
       gl.setXf(m);
     }

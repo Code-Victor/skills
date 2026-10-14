@@ -495,28 +495,33 @@ export const annotationJobs = (spec, style, scene, index, ci, c, { kind, builder
   levels.sort((a, b) => a.L - b.L);
   const nearest = (S) => { let best = levels[0], d = Infinity; for (const l of levels) { const e = Math.abs(Math.log(S / l.S)); if (e < d) { d = e; best = l; } } return best; };
 
-  // ---- where the label goes: the first side (and lean) that keeps arrow and label inside what shows and off the mark, all the time it shows
+  // ---- where the label goes: the side (and lean) that keeps arrow and label inside what shows and off the mark for the most of the
+  // time the target shows, in the order above, below, right, left (each later choice costs a little, so a side that fails for a
+  // moment of a camera move still wins over one further down the list; a small overflow, which the page absorbs, counts a quarter)
   const hasLabel = has(c.label), arrowOn = hasLabel && c.arrow !== false;
   const len = (AR.length ?? 80) * u, gap = (AR.gap ?? 10) * u, lgap = (LB.gap ?? 8) * u, margin = (LB.margin ?? 12) * u;
   let place = null;
   if (hasLabel) {
-    const est = labelEstimate(style, c.label, u, W), s0 = samples[0], cx = s0.r.x + s0.r.w / 2, cy = s0.r.y + s0.r.h / 2;
+    // judge only the moments the target shows (the page hides arrow and label while the camera has it out of view)
+    const shown = samples.filter((s) => { const x = s.r.x + s.r.w / 2, y = s.r.y + s.r.h / 2; return x > s.vis.x0 && x < s.vis.x1 && y > s.vis.y0 && y < s.vis.y1; });
+    const judged = shown.length ? shown : samples;
+    const est = labelEstimate(style, c.label, u, W), s0 = judged[0], cx = s0.r.x + s0.r.w / 2, cy = s0.r.y + s0.r.h / 2;
     const leanX = cx < (s0.vis.x0 + s0.vis.x1) / 2 ? [1, -1] : [-1, 1], leanY = cy < (s0.vis.y0 + s0.vis.y1) / 2 ? [1, -1] : [-1, 1];
     const sides = c.side ? [c.side] : SIDES, cands = sides.flatMap((side) => (side === 'above' || side === 'below' ? leanX : leanY).map((dir) => ({ side, dir })));
-    for (const cand of cands) {
+    for (const [ci2, cand] of cands.entries()) {
       const U = unitAt(cand.side, cand.dir, len, lgap, arrowOn);
-      let bad = 0, worst = 0;
-      for (const s of samples) {
+      let bad = 0, worst = 0, cost = 0;
+      for (const s of judged) {
         const lv = nearest(s.S), A = anchorAt(cand.side, s.r, lv.ext[cand.side] + gap);
         const lr = labelRect([A[0] + U.P[0], A[1] + U.P[1]], U.attach, est.w, est.h);
         const unit = union(lr, { x: Math.min(A[0], A[0] + U.T[0]) - 6 * u, y: Math.min(A[1], A[1] + U.T[1]) - 6 * u, w: Math.abs(U.T[0]) + 12 * u, h: Math.abs(U.T[1]) + 12 * u });
         const vis = { x: s.vis.x0 + margin, y: s.vis.y0 + margin, w: s.vis.x1 - s.vis.x0 - 2 * margin, h: s.vis.y1 - s.vis.y0 - 2 * margin };
         const mark = { x: s.r.x - lv.ext.left, y: s.r.y - lv.ext.above, w: s.r.w + lv.ext.left + lv.ext.right, h: s.r.h + lv.ext.above + lv.ext.below };
         const out = overflow(unit, vis), hit = overlaps(lr, mark);
-        if (out > 0.5 || hit) bad++;
+        if (out > 0.5 || hit) { bad++; cost += hit || out > 16 * u ? 1 : 0.25; }
         worst = Math.max(worst, out + (hit ? 1e4 : 0));
       }
-      const score = bad * 1e7 + worst;
+      const score = cost / judged.length + 0.07 * ci2 + worst * 1e-7;
       if (!place || score < place.score) place = { ...cand, U, score, bad };
       if (bad === 0) break;
     }

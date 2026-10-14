@@ -182,7 +182,7 @@ in vec2 vC; out vec4 o;
 void main(){
   vec3 tt = texture(uTime, vC).rgb;
   float t = (floor(tt.r * 255. + .5) * 256. + floor(tt.g * 255. + .5)) / 65535.;
-  if (t > uProgress + 1e-6) discard;
+  if (uProgress <= 0. || t > uProgress + 1e-6) discard;   // nothing before the pen starts
   o = texture(uTex, vC) * uOpacity;
 }`;
 
