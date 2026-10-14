@@ -223,6 +223,7 @@ const titleDefault = (c) => {
   const size = W * t.size, effect = c.effect ?? effectOf(style, scene), font = c.font('display');
   const track = t.tracking[effect] ?? -0.03, left = t.align === 'left';
   const col = (em) => (em ? `color:${accent};` : '');
+  const measure = `max-width:${W * (t.maxWidth ?? 0.8)}px;text-align:${left ? 'left' : 'center'};line-height:${t.lineHeight ?? 1.12};text-wrap:balance`;
   let inner;
   const multi = effect === 'type' || effect === 'lines';
   if (multi) {
@@ -232,16 +233,25 @@ const titleDefault = (c) => {
     inner = `<span style="font-size:${size}px;font-weight:${t.weight};color:${fg};letter-spacing:${track}em;font-family:${font}">${
       words.map((w, k) => `<span data-p="w${k}" data-pad="12" style="${col(w.em)}display:inline-block;white-space:pre;${k < words.length - 1 ? 'margin-right:0.22em' : ''}">${esc(w.w)}</span>`).join('')}</span>`;
   } else if (effect === 'micro-scale-fade') {
-    inner = `<span ${has(scene.text) ? 'data-p="all" data-pad="12" ' : ''}style="font-size:${size}px;font-weight:${t.weight};color:${fg};letter-spacing:${track}em;font-family:${font};display:inline-block">${c.rich(scene.text)}</span>`;
+    inner = `<span ${has(scene.text) ? 'data-p="all" data-pad="12" ' : ''}style="font-size:${size}px;font-weight:${t.weight};color:${fg};letter-spacing:${track}em;font-family:${font};display:inline-block;${measure}">${c.rich(scene.text)}</span>`;
   } else {
-    const chars = emChars(scene.text);
-    inner = `<span style="font-size:${size}px;font-weight:${t.weight};color:${fg};letter-spacing:${track}em;font-family:${font}">${
-      chars.map((ch, k) => `<span ${ch.c.trim() ? `data-p="c${k}" data-pad="44" ` : ''}style="${col(ch.em)}display:inline-block;white-space:pre">${esc(ch.c)}</span>`).join('')}</span>`;
+    // Each word is kept whole (a line may only break at a space) and the spaces are plain text, so a
+    // long title wraps inside the measure instead of running edge to edge or splitting a word.
+    const chars = emChars(scene.text), words = [];
+    chars.forEach((ch, k) => {
+      if (!ch.c.trim()) return words.push(esc(ch.c));
+      const g = `<span data-p="c${k}" data-pad="44" style="${col(ch.em)}display:inline-block;white-space:pre">${esc(ch.c)}</span>`;
+      if (typeof words.at(-1) === 'object') words.at(-1).push(g); else words.push([g]);
+    });
+    inner = `<span style="font-size:${size}px;font-weight:${t.weight};color:${fg};letter-spacing:${track}em;font-family:${font};${measure}">${
+      words.map((w) => (typeof w === 'object' ? `<span style="white-space:nowrap">${w.join('')}</span>` : w)).join('')}</span>`;
   }
-  const wrap = multi ? `<div style="display:flex;justify-content:${left ? 'flex-start' : 'center'}">${inner}</div>` : `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:${left ? 'flex-start' : 'center'};${effect === 'word-push' ? 'white-space:nowrap' : ''}">${inner}</div>`;
+  // One line sits centred in a box one line tall, as it always has; a longer title grows the box downwards and pushes the subtitle with it.
+  const wrap = multi ? `<div style="display:flex;justify-content:${left ? 'flex-start' : 'center'}">${inner}</div>` : effect === 'word-push' ? `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:${left ? 'flex-start' : 'center'};white-space:nowrap">${inner}</div>` : inner;
+  const box = multi ? '' : effect === 'word-push' ? `height:${size * 1.3}px` : `display:grid;align-items:center;justify-items:${left ? 'start' : 'center'};min-height:${size * 1.3}px`;
   const sub = has(scene.subtitle) ? `<div data-p="sub" data-pad="8" style="font-size:${W * t.subtitleSize}px;font-weight:${t.subtitleWeight};color:${fg}">${c.rich(scene.subtitle)}</div>` : '';
   const html = `<div class="af" style="align-items:${left ? 'flex-start' : 'center'};justify-content:center;gap:${W * t.gap}px;font-family:${c.font('text')};${left ? `padding-left:${W * t.padLeft}px` : ''}">
-    <div style="position:relative;${left ? '' : 'width:100%;'}${multi ? '' : `height:${size * 1.3}px`}">${wrap}</div>${sub}</div>`;
+    <div style="position:relative;${left ? '' : 'width:100%;'}${box}">${wrap}</div>${sub}</div>`;
   return { html };
 };
 /** Helpers for custom title builders: the per-glyph / per-word / whole spans the reveals move. */
