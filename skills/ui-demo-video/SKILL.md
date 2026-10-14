@@ -57,6 +57,8 @@ References, read when the task reaches them:
   and rehearsing.
 - `references/scenes.md`: scene types, clip options, the auto-camera,
   captions, callouts, music and narration.
+- `references/styles.md`: the five visual styles, how to pick one, comparing
+  them on your demo, overriding a token.
 - `references/craft.md`: the research behind the defaults (pacing, before /
   after formats, delivery limits, anti-patterns), with sources.
 - `references/remotion-remocn.md`: the optional Remotion renderer, for a
@@ -65,8 +67,8 @@ References, read when the task reaches them:
 ## Requirements
 
 - Node 22+, ffmpeg, Google Chrome or Chromium. Nothing to install with npm.
-- The first render downloads the Inter font once (it falls back to a system
-  font offline).
+- The first render in a style downloads that style's fonts once (it falls
+  back to a system font offline).
 
 ## 1. Plan
 
@@ -160,7 +162,7 @@ record. `scripts/demo.mjs init` writes a valid starter;
         { "click": { "selector": "input[aria-label='Email address']" }, "dur": 0.7 },
         { "type": "jordan.lee+demo@example.com", "cps": 22 },
         { "click": { "text": "Send invite" }, "dur": 0.7 },
-        { "mark": "sent-toast", "target": { "selector": "[data-sonner-toast]" }, "look": false },
+        { "mark": "sent-toast", "target": { "selector": "[data-sonner-toast]" } },
         { "wait": 1.8 },
         { "move": { "x": 900, "y": 640 }, "dur": 0.8 }
       ]
@@ -183,7 +185,10 @@ A take is a URL and a list of steps (`references/steps.md` has every step).
 The ones that make directing easy:
 
 - `{ "mark": "toast", "target": {...} }` notes where something is, for a
-  callout or for the camera to look at.
+  callout or for the camera to look at. Mark the result of an action (the
+  toast after a save) and the camera goes to it. A mark a callout uses is
+  always framed; `"look": false` only keeps the camera off a mark nothing
+  circles.
 - `{ "camera": "wide" }` right after a click that opens a drawer, dialog or
   page, so the auto-camera pulls back to show it whole.
 - `{ "waitFor": {...} }` instead of guessing how long a load takes.
@@ -246,18 +251,44 @@ guide is `references/scenes.md`.
 **The auto-camera** (`"autoCamera": true` on a clip) pushes in about 1.8x as
 the cursor acts, follows each action inside a shot, holds 2 s, pulls out at
 `"camera": "wide"` steps and scrolls, and skips pushes that would wobble or
-twitch. Check it on the sheet; hand-tune a scene by replacing `autoCamera`
-with your own `moves`.
+twitch. Cause, then effect: after a click or typing it stays on the action
+for 0.6 s, then moves to its result (a marked toast, anything a callout
+circles) and holds it while the callout shows, or frames both when they fit
+one view. A pan to something more than a view away flies on a smooth path
+that pulls out a little on the way. Check it on the sheet; hand-tune a scene
+by replacing `autoCamera` with your own `moves`.
+
+**The look** is a top-level `"style"`. No `style` means `studio`. Pick by
+audience, then say it in one line (`"style": "editorial"`):
+
+| `style` | The idea | Pick it for | Watch out |
+|---|---|---|---|
+| `studio` | Soft light gradient, a big white window a zoom grows to fill the frame, pill captions | The safe default; Slack, PRs, docs | Least distinctive |
+| `midnight` | Near-black stage, glass captions, one pale accent | Launches, dark-mode products, a premium feel | A light app is a bright slab; slower pacing |
+| `editorial` | Warm paper, serif, captions as margin notes | Changelogs, weekly updates, writing-led demos | Least showy; recording is smaller |
+| `terminal` | Mono type, typed text, stepped motion | Developer tools, PR demos for engineers | Cold for consumer products; typed text needs time |
+| `sketch` | A photo on paper, annotated by hand | Bug-fix before and afters | Playful; wrong for a formal audience |
+
+Under any style but `studio`, the style owns the ground and text colour
+(`theme.background` and `theme.foreground` are ignored with a warning);
+`theme.accent`, `tagColors` and `logo` still apply, adapted to the style. A
+`transition` you write is honoured; otherwise the style's own is used. When
+the person cannot choose, run `node scripts/demo.mjs <demo.json> --styles
+all`: it renders every style from the same recordings (nothing is recorded
+again), then writes a sheet and a picker page (`references/styles.md`).
 
 **Framing, per scene** (`frame`):
 
 | `frame` | What it is | Use for |
 |---|---|---|
-| `flat` (default) | The recording in a rounded window; `moves` push in *inside* the window, like a screen-recording editor | Most scenes |
+| `flat` (default) | The recording in a rounded window. In `studio` and `midnight` a zoom grows the whole window until the recording fills the frame (Cap, Screen Studio); in the other styles it crops *inside* a fixed window. `"camera": "inside"` or `"fill"` on the spec or the scene overrides the style | Most scenes |
 | `full` | Edge to edge, no window | Dense UI that needs every pixel |
-| `stage` | A tilted 3D product shot | Remotion renderer only (see below); here it renders as `flat` with a warning |
+| `stage` | A tilted 3D product shot | Remotion renderer only (see below); here it renders as `flat` with a warning, in every style |
 
-**Transitions**, per gap (`transitions[i]` is the gap after scene `i`):
+**Transitions**, per gap (`transitions[i]` is the gap after scene `i`). The
+lengths and looks below are `studio`'s; other styles redraw them in their own
+language (in `terminal` and `sketch` every named one becomes that style's own
+move), and a style's default can be a transition of its own:
 
 | Transition | Feel | Use between |
 |---|---|---|
@@ -271,15 +302,30 @@ A transition overlaps the two scenes it joins: give a scene next to a
 `focus-pull` at least 3.1 s (the check warns when it would eat over half).
 
 **Titles** pick an `effect`: `soft-blur-in` (the opener), `word-push` (a
-closing line) or `micro-scale-fade` (a chapter card).
+closing line) or `micro-scale-fade` (a chapter card). Styles that type or draw
+their titles have their own default and treat these as variants.
 
-**Captions**: one short sentence each, at most 42 characters a line, 15 to 17
-characters a second (20 at most), 1.5 s minimum. `captions` gives a long clip
-several in turn. They sit under the frame, never over the UI.
+**Emphasis**: `*word*` in a title, caption, list item or card line marks one
+accented word (colour or italic, the style decides); `\*` is a literal
+asterisk. Caption files drop the markers.
 
-**Callouts**: a ring (or `spotlight`) around something small the caption
-names; name a `mark` and the auto-camera places and times it, ending at the
-next click.
+**Captions**: one short sentence each, at most 42 characters a line and two
+lines, 15 to 17 characters a second, 1.5 s minimum; the check warns past any
+of those. A caption says what to look at; the story belongs on the title,
+issue and list cards. `captions` gives a long clip several in turn. Where they
+sit depends on the style: in the strip under the window in `studio` and
+`midnight` (over the recording, on a plate, while a zoom fills the frame, and
+at the top for their whole time when the action is under that spot), under the
+window in `terminal`, in a margin column in `editorial`, in the photo's strip
+in `sketch`. `terminal` types them and `sketch` writes them by hand (faster
+when time is short); the check does not count that time, so leave a little
+extra.
+
+**Callouts**: a hand-drawn circle (or `underline`, `highlight`, `box`,
+`bracket`, `strike`, `cross`; Rough Notation's marks, in the style's own ink)
+round something small the caption names, drawn on with an arrow from a short
+label; `ring` and `spotlight` remain. Name a `mark` and the auto-camera places
+and times it, ending at the next click.
 
 **Speed**: `playbackRate` 1.1 to 1.25 tightens typing and loading without
 looking fast-forwarded. `trimStartSec` skips the start of a take; two scenes
@@ -324,6 +370,7 @@ Useful options (all of them: `references/demo-json.md`):
   switch the same checkout: stop the server, check out the old commit,
   rebuild what it imports, clear the framework cache (`.next`), restart.
 - `--only render` or `--no-deliver` while you iterate on the cut.
+- `--style <name>` for one run in another look; `--styles all` to compare.
 - `--gif 12:6` for a GIF excerpt, `--max-mb 10` for the PR copy's size.
 
 Don't record while something heavy runs (a build, another render): the take
@@ -333,13 +380,15 @@ still saves, but with fewer painted frames, and the summary will warn.
 
 Look, don't assume. Two kinds of image cover everything:
 
-- `out/<name>-sheet.png`: the finished video in one grid, with times.
+- `out/<name>-sheet.png`: the finished video in one grid, with times. After
+  `--styles`, `out/<name>-styles.png` instead: one row per style, the same
+  moments in each.
 - `clips/<take>.mp4.sheet.png`: each take, one frame a second.
 
 Check: no dev overlays or debug UI, the cursor where expected, the page
 finished loading, the action actually happened (a click that hit the wrong
 element still "succeeds"), nothing personal or another customer's data on
-screen, captions readable and under the frame, the camera on what each
+screen, captions readable and clear of the UI, the camera on what each
 caption names, transitions clean, nothing cropped. For one frame at full
 size: `node scripts/compose.mjs <demo folder>/build/video.json --clips <demo
 folder> --still 12.5 --still-out <demo folder>/f.png`.
@@ -364,7 +413,11 @@ give it a 150 ms fade and slight scale from its anchor.
 
 In `out/`: `<name>.mp4` (the 1080p60 master), `<name>-pr.mp4` (fits
 `--max-mb`), `<name>.vtt` and `.srt` (from the scenes, on the real timeline),
-`<name>-chapters.txt`, `<name>-poster.png`, and a GIF with `--gif`. The
+`<name>-chapters.txt`, `<name>-poster.png`, and a GIF with `--gif`. A
+`--styles` run leaves `out/styles/<style>.mp4`, the sheet and
+`out/<name>-styles.html` (open it in a browser: number keys flip between the
+styles at the same playback position) and delivers nothing: once the person
+picks, run again with `--style <name>`, or put it in `demo.json`. The
 delivery step also scans the master for frozen and black stretches: a still
 run inside a clip scene usually means a trim ran past the end of a recording.
 
@@ -386,7 +439,8 @@ couldn't re-record sharply). Then `scripts/chrome.sh --stop`.
 The default renderer draws every scene type and transition. The one look it
 doesn't have is `frame: "stage"`, the tilted 3D product shot. For that, or to
 build on remocn's component catalog, render the same spec with Remotion
-(`references/remotion-remocn.md`): it takes minutes instead of seconds, needs
+(`references/remotion-remocn.md`; it ignores `style` and draws the studio
+look): it takes minutes instead of seconds, needs
 npm and network access, and **Remotion is free for individuals, non-profits
 and companies of up to 3 people; larger companies need a Company License**
 (remotion.pro/license). Say so when making a video for a company.
@@ -401,7 +455,7 @@ D=~/Downloads/<name>-demo
 node scripts/capture.mjs clip --url <u> --out $D/clips/x.mp4 --duration 8 --steps steps.json --sheet
 node scripts/capture.mjs clip --url <u> --steps steps.json --dry-run     # rehearse only
 node scripts/auto-camera.mjs $D/build/video.json --public $D             # moves and callouts from the takes
-node scripts/check-video.mjs $D/build/video.json --public $D             # trims, aspects, files, reading speed
+node scripts/check-video.mjs $D/build/video.json --public $D             # trims, aspects, files, reading speed, callouts off camera
 node scripts/compose.mjs $D/build/video.json --clips $D --out $D/out/x.mp4 --sheet $D/out/x-sheet.png
 node scripts/deliver.mjs $D/out/x.mp4 --spec $D/build/video.json --max-mb 10
 ```

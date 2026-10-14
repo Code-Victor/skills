@@ -9,6 +9,7 @@ import { GL } from './gl.js';
 import { ClipSource, dropFile } from './decode.js';
 import { Scenes } from './scenes.js';
 import { activeScenes, sceneSpans } from './timeline.js';
+import { setStyleHash } from './layout.js';
 
 const now = () => performance.now();
 const post = (path, body, headers = {}) => fetch(path, { method: 'POST', body, headers });
@@ -18,7 +19,9 @@ const LEAD = 50;   // open a scene's decoder this many frames before it starts
 
 async function run() {
   const m = await (await fetch('/manifest.json')).json();
-  const { W, H, fps, spec } = m;
+  const { W, H, fps, spec, style } = m;
+  setStyleHash(style.hash);
+  spec.style = style;   // timeline.js reads the style's own transitions from the spec
   const FRAME_US = 1e6 / fps;
   const spans = sceneSpans(spec, fps);
   const N = m.frames;
@@ -31,7 +34,7 @@ async function run() {
   await Promise.all(Object.entries(m.stills).map(async ([id, s]) => {
     const blob = await (await fetch(s.file)).blob();
     const bmp = await createImageBitmap(blob, { premultiplyAlpha: 'premultiply', colorSpaceConversion: 'none' });
-    stills.set(id, { ...s, tex: gl.still(bmp) });
+    stills.set(id, { ...s, tex: gl.still(bmp, s.filter) });
     bmp.close();
   }));
   const images = new Map();
@@ -41,7 +44,7 @@ async function run() {
     const bmp = await createImageBitmap(blob, { premultiplyAlpha: 'premultiply' });
     images.set(i, gl.still(bmp)); bmp.close();
   }));
-  const scenes = new Scenes({ gl, spec, fps, W, H, stills, images });
+  const scenes = new Scenes({ gl, spec, style, fps, W, H, stills, images });
 
   // ---- encoder ----
   const still = m.mode === 'still';
@@ -110,8 +113,29 @@ async function run() {
     r.src = {};
   };
 
+  const clipIdx = spec.scenes.map((_, k) => k).filter((k) => Object.keys(needs(spec.scenes[k])).length);
+  const ambientLoads = new Map();
+  const ambientFor = async (i, n, frames) => {
+    const own = frames[i].main ?? frames[i].before;
+    if (own) return own;
+    const prev = clipIdx.filter((k) => k < i).pop();
+    const firstKey = (k) => Object.keys(needs(spec.scenes[k]))[0];
+    if (prev !== undefined && rt[prev].tex[firstKey(prev)]?.last) return rt[prev].tex[firstKey(prev)];   // hold the clip before: its last frame
+    const next = clipIdx.find((k) => k > i);
+    if (next === undefined) return undefined;
+    // one load per clip however many scenes ask at once (two decoders reads on one source would fight)
+    if (!ambientLoads.has(next)) ambientLoads.set(next, (async () => {
+      await openScene(next, n);
+      const key = firstKey(next), tex = rt[next].tex[key];
+      if (!tex.last) gl.video(tex, await rt[next].src[key].get(needs(spec.scenes[next])[key].trim * 1e6));
+      return tex;
+    })());
+    return ambientLoads.get(next);
+  };
+
   // ---- frame loop ----
   const first = still ? m.stillFrame : 0, last = still ? m.stillFrame + 1 : N;
+  const hashes = [];   // m.hashFrames: a SHA-1 of the canvas pixels of every frame, taken just before the encoder sees it (determinism checks)
   const t0 = now();
   const st = { decode: 0, draw: 0, vframe: 0, backpressure: 0, encode: 0 };
   let lastProgress = t0;
@@ -132,10 +156,12 @@ async function run() {
         frames[a.i][key] = rt[a.i].tex[key];
       }));
     }));
+    // ambient background: every active scene needs a recording frame to take its colours from (its own, or the nearest clip's)
+    if (style.canvas.background.kind === 'ambient') await Promise.all(active.map(async (a) => { frames[a.i].ambient = await ambientFor(a.i, n, frames); }));
     st.decode += now() - t;
 
     t = now();
-    scenes.frame(active, frames, null);
+    scenes.frame(active, frames, n);
     scenes.logo(n);
     st.draw += now() - t;
 
@@ -143,6 +169,11 @@ async function run() {
       const blob = await canvas.convertToBlob({ type: 'image/png' });
       await post('/still-out', blob);
       break;
+    }
+    if (m.hashFrames) {
+      const g = gl.gl, px = new Uint8Array(W * H * 4);
+      g.bindFramebuffer(g.FRAMEBUFFER, null); g.readPixels(0, 0, W, H, g.RGBA, g.UNSIGNED_BYTE, px);
+      hashes.push([...new Uint8Array(await crypto.subtle.digest('SHA-1', px))].slice(0, 8).map((b) => b.toString(16).padStart(2, '0')).join(''));
     }
     t = now();
     const vf = new VideoFrame(canvas, { timestamp: Math.round(n * FRAME_US), duration: Math.round(FRAME_US) });
@@ -165,7 +196,7 @@ async function run() {
   spans.forEach((_, i) => closeScene(i));
   const wallMs = now() - t0;
   await post('/done', JSON.stringify({ ok: true, frames: last - first, wallMs: Math.round(wallMs), chunks, st: Object.fromEntries(Object.entries(st).map(([k, v]) => [k, Math.round(v)])),
-    renderer: gl.renderer, enc: encInfo, warnings: stats.warnings, decodeFallbacks: stats.decodeFallbacks, decodeWaitMs: Math.round(stats.decodeWaitMs || 0) }));
+    renderer: gl.renderer, enc: encInfo, hashes, warnings: stats.warnings, decodeFallbacks: stats.decodeFallbacks, decodeWaitMs: Math.round(stats.decodeWaitMs || 0) }));
 }
 
 run().catch((e) => post('/done', JSON.stringify({ ok: false, fatal: String(e && e.message || e), stack: String(e && e.stack || '').slice(0, 1500), badClip: e && e.clip })));

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // One file in, one finished demo video out.
 //
-//   node scripts/demo.mjs init <dir> [--url http://localhost:3000] [--name my-demo]
+//   node scripts/demo.mjs init <dir> [--url http://localhost:3000] [--name my-demo] [--style <name>]
 //   node scripts/demo.mjs <demo.json> [options]
 //
 // You write demo.json (a video.json plus the takes to record, see
@@ -27,6 +27,9 @@
 //   build/steps/<take>.json, build/logs/<stage>.log;
 //   out/<name>.mp4, out/<name>-pr.mp4, .vtt, .srt, -chapters.txt, -poster.png,
 //   out/<name>-sheet.png (a contact sheet of the finished video: look at it).
+// A comparison run (--styles) adds out/styles/<style>.mp4, out/<name>-styles.png
+// (one row per style, the same moments in every row) and out/<name>-styles.html
+// (a local page to flip between the styles at full size).
 //
 // Options:
 //   --retake <a,b|all>   record these takes again even if nothing changed.
@@ -36,6 +39,15 @@
 //                        "before" takes on an old branch, then switching).
 //   --only <stage>       capture | render | deliver: run just that part
 //   --no-deliver         stop after render
+//   --style <name>       render in this visual style for this run (the file is not
+//                        edited; demo.json can carry "style": "<name>" itself). An
+//                        unknown name stops at validate with the valid names
+//   --styles <a,b|all>   compare looks on your own demo: capture, camera and check
+//                        run once (nothing is recorded twice), then the demo is
+//                        rendered once per style, one after another, into
+//                        out/styles/<style>.mp4, with a comparison sheet and a picker
+//                        page. No delivery (no PR copy per style). Works with
+//                        --only render on an existing build. Needs two or more styles
 //   --stale-ok           render even if a clip's take changed or its take.json is
 //                        missing (normally that stops with the take's name)
 //   --no-rehearse        skip the dry run
@@ -51,6 +63,9 @@
 //   --force              work in a folder under /tmp (macOS empties those on
 //                        restart; a whole day of recordings was lost that way)
 //
+// Testing only: UI_DEMO_COMPOSE=<script> runs that renderer instead of
+// compose.mjs (it must take the same flags).
+//
 // Exit codes: 0 done, 1 a stage failed (its name is printed), 2 usage, 3 the
 // page needs a sign-in (run scripts/chrome.sh --login <url>).
 import { spawn, spawnSync } from 'node:child_process';
@@ -58,7 +73,9 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync,
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { checkDemo, checkSpec } from './check-video.mjs';
-import { CAPTURE_OPTIONS, SAFE_NAME, captureArgs, clipPath, resolveSpec, takeHash, takeSpec, takesUsed } from './spec-lib.mjs';
+import { chooseMoments, makeSheet, pickerHtml } from './style-picker.mjs';
+import { resolveStyle } from './compositor/styles/index.js';
+import { CAPTURE_OPTIONS, SAFE_NAME, captureArgs, clipPath, fillTiming, resolveSpec, styleName, takeHash, takeSpec, takesUsed } from './spec-lib.mjs';
 
 const T0 = Date.now();
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -66,7 +83,7 @@ const secs = (t0 = T0) => +((Date.now() - t0) / 1000).toFixed(1);
 
 // ---------------------------------------------------------------- arguments
 
-const VALUE = new Set(['retake', 'takes', 'only', 'max-mb', 'gif', 'port', 'parallel', 'url', 'name']);
+const VALUE = new Set(['retake', 'takes', 'only', 'max-mb', 'gif', 'port', 'parallel', 'url', 'name', 'style', 'styles']);
 const argv = process.argv.slice(2);
 const pos = [];
 const opt = {};
@@ -80,8 +97,9 @@ for (let i = 0; i < argv.length; i++) {
   }
 }
 const USAGE = `usage:
-  demo.mjs init <dir> [--url <base>] [--name <name>] [--force]
+  demo.mjs init <dir> [--url <base>] [--name <name>] [--style <name>] [--force]
   demo.mjs <demo.json> [--retake a,b|all] [--takes a,b] [--only capture|render|deliver]
+                       [--style <name> | --styles a,b,c|all]
                        [--no-deliver] [--no-rehearse] [--max-mb 10] [--gif start:dur]
                        [--port 9222] [--parallel 1] [--json] [--force]
 Read the top of this file for the stages and the folder layout. After you change
@@ -89,6 +107,16 @@ the APP (not demo.json) use --retake: the fingerprint cannot see your code.`;
 if (opt.help || opt.h || !pos.length) {
   console.log(USAGE);
   process.exit(opt.help || opt.h ? 0 : 2);
+}
+for (const k of ['style', 'styles']) {
+  if (k in opt && (!opt[k] || opt[k] === true || String(opt[k]).startsWith('--'))) {
+    console.error(`--${k} needs a value${k === 'styles' ? ' (a comma list of style names, or all)' : ' (a style name)'}`);
+    process.exit(2);
+  }
+}
+if (opt.style && opt.styles) {
+  console.error('--style renders one look, --styles compares several: use one of them');
+  process.exit(2);
 }
 const JSON_OUT = !!opt.json;
 const say = (...a) => (JSON_OUT ? console.error : console.log)(...a);
@@ -110,6 +138,27 @@ Work somewhere that lasts, e.g. ~/Downloads/<name>-demo/ (or pass --force for a 
   }
 };
 
+// ---------------------------------------------------------------- styles
+
+// The renderer names its visual styles (compose.mjs --list-styles --json). A
+// renderer that predates them answers with a usage error: then there is one
+// style, `studio`, and no --style flag is passed.
+const COMPOSE = process.env.UI_DEMO_COMPOSE ? resolve(process.env.UI_DEMO_COMPOSE) : join(HERE, 'compose.mjs');
+const listStyles = () => {
+  const r = spawnSync(process.execPath, [COMPOSE, '--list-styles', '--json'], { encoding: 'utf8', timeout: 30000 });
+  const parse = (t) => { try { return JSON.parse(t); } catch { return undefined; } };
+  const text = (r.stdout ?? '').trim();
+  const v = r.status === 0 ? (parse(text) ?? parse(text.split('\n').reverse().find((l) => l.startsWith('[')) ?? '')) : undefined;
+  if (Array.isArray(v) && v.length && v.every((x) => x && typeof x.name === 'string' && SAFE_NAME.test(x.name))) {
+    return { legacy: false, styles: v.map((x) => ({ name: x.name, description: x.description ?? '', suits: x.suits ?? '' })) };
+  }
+  return { legacy: true, styles: [{ name: 'studio', description: '', suits: '' }] };
+};
+const unknownStyle = (n, known) => `style "${n}" is not one of this renderer's styles (valid: ${known.styles.map((x) => x.name).join(', ')})${known.legacy ? '; this renderer has no named styles yet' : ''}`;
+// Only a renderer that lists its styles takes --style; the old one has one look.
+const styleFlag = (n) => (known && !known.legacy && n ? ['--style', n] : []);
+const styleOf = (d) => styleName(d);
+
 // ---------------------------------------------------------------- init
 
 if (pos[0] === 'init') {
@@ -121,8 +170,16 @@ if (pos[0] === 'init') {
     console.error(`${file} already exists (--force overwrites it)`);
     process.exit(2);
   }
+  if (opt.style) {
+    const known = listStyles();
+    if (!known.styles.some((x) => x.name === opt.style)) {
+      console.error(unknownStyle(opt.style, known));
+      process.exit(2);
+    }
+  }
   const starter = {
     name,
+    ...(opt.style ? { style: opt.style } : {}),
     url: opt.url ?? 'http://localhost:3000',
     capture: { hideFloating: true },
     takes: {
@@ -202,7 +259,7 @@ const paths = {
 
 // A stage failure ends the run: say which stage, what happened, and (with
 // --json) the same as data. `code` lets a sign-in page exit 3.
-const summary = { ok: false, demo: demoFile, stages, warnings, reused: [], recorded: [], outputs: {}, look: [] };
+const summary = { ok: false, demo: demoFile, stages, warnings, reused: [], recorded: [], outputs: {}, look: [], style: null };
 const fail = (stage, lines, code = 1) => {
   const msg = [].concat(lines).join('\n');
   summary.error = { stage, message: msg };
@@ -299,12 +356,23 @@ if (only && only !== 'capture' && opt.takes) {
   process.exit(2);
 }
 const justCapture = only === 'capture' || (!only && !!opt.takes);
+const compare = !!opt.styles;
+if (compare && (justCapture || only === 'deliver')) {
+  console.error('--styles renders the demo once per style, so it cannot go with --only capture, --only deliver or --takes');
+  process.exit(2);
+}
+const styleNames = [...new Set(list(opt.styles))];
+if (compare && styleNames.length < 2 && !styleNames.includes('all')) {
+  console.error(`--styles compares two or more styles (got ${styleNames.length}); name them like --styles studio,ink or use --styles all. For one style use --style <name>`);
+  process.exit(2);
+}
 const doCapture = !only || only === 'capture';
 const doRender = !justCapture && (!only || only === 'render');
 const doDeliver = !justCapture && !opt['no-deliver'] && (!only || only === 'deliver');
 let name;
 let used;
 let takes;
+let known; // { legacy, styles } once --style or --styles asked about styles
 
 await stage('validate', () => {
   let raw;
@@ -326,6 +394,16 @@ await stage('validate', () => {
     for (const n of list(opt[flagName])) if (n !== 'all' && !defined.includes(n)) extra.push(`--${flagName} "${n}" is not a take in demo.json (takes: ${defined.join(', ') || 'none'})`);
   }
   for (const w of r.warnings) warn(w);
+  if (opt.style || compare) {
+    known = listStyles();
+    if (compare) {
+      if (styleNames.includes('all')) styleNames.splice(0, styleNames.length, ...known.styles.map((x) => x.name));
+      if (styleNames.length < 2) {
+        return fail('validate', `--styles needs two or more styles to compare, and this renderer has ${known.styles.length} (${known.styles.map((x) => x.name).join(', ')})`, 2);
+      }
+    }
+    for (const n of compare ? styleNames : [opt.style]) if (!known.styles.some((x) => x.name === n)) extra.push(unknownStyle(n, known));
+  }
   if (r.errors.length || extra.length) {
     return fail('validate', [`${r.errors.length + extra.length} problem${r.errors.length + extra.length === 1 ? '' : 's'} in ${basename(demoFile)}:`,
       ...[...r.errors, ...extra].map((e) => `  - ${e}`)]);
@@ -335,6 +413,9 @@ await stage('validate', () => {
   takes = Object.fromEntries(used.map((n) => [n, takeSpec(demo, n)]));
   for (const d of Object.values(paths)) mkdirSync(d, { recursive: true });
   summary.name = name;
+  // The style this run renders in: the flag, else what demo.json says, else
+  // the renderer's default. A comparison run has no single style.
+  summary.style = compare ? null : (opt.style ?? styleOf(demo) ?? 'studio');
   return `${demo.scenes.length} scenes, ${r.totalSec.toFixed(1)}s, ${used.length} take${used.length === 1 ? '' : 's'}, ${r.warnings.length} warning${r.warnings.length === 1 ? '' : 's'}`;
 });
 
@@ -477,6 +558,7 @@ if (justCapture) await finish();
 // ---------------------------------------------------------------- 6-7 camera, check
 
 let specPath = join(paths.build, 'video.json');
+let allAspects = {};
 if (doRender) {
   await stage('camera', async () => {
     // A clip is only trusted if the take that made it is still the take
@@ -502,7 +584,11 @@ if (doRender) {
       if (w && h) aspects[n] = +(w / h).toFixed(3);
       else if (!existsSync(clipFile(n))) return fail('camera', `take "${n}" has no clip at ${clipFile(n)} (record it first: run without --only)`);
     }
-    const spec = resolveSpec(demo, aspects);
+    allAspects = aspects;
+    // --style replaces demo.json's style in the resolved spec (the file itself is
+    // never edited). The spec holds only what the author wrote for theme and
+    // transitions when the style is not studio; the style supplies the rest.
+    const spec = resolveSpec(demo, aspects, { style: opt.style });
     writeFileSync(specPath, `${JSON.stringify(spec, null, 2)}\n`);
     const r = await run('auto-camera', process.execPath, [join(HERE, 'auto-camera.mjs'), specPath, '--public', dir]);
     if (r.code !== 0) return fail('camera', [`auto-camera exited ${r.code}`, tail(r.text)]);
@@ -522,8 +608,9 @@ if (doRender) {
   // ---------------------------------------------------------------- 8 render
   const master = join(paths.out, `${name}.mp4`);
   const sheet = join(paths.out, `${name}-sheet.png`);
-  await stage('render', async () => {
-    const r = await run('render', process.execPath, [join(HERE, 'compose.mjs'), specPath, '--out', master, '--clips', dir, '--sheet', sheet, '--json'], { timeoutSec: 1800 });
+  if (compare) await compareStyles();
+  else await stage('render', async () => {
+    const r = await run('render', process.execPath, [COMPOSE, specPath, '--out', master, '--clips', dir, '--sheet', sheet, ...styleFlag(opt.style), '--json'], { timeoutSec: 1800 });
     const j = lastJson(r.text);
     if (r.code !== 0 || j?.ok === false) return fail('render', [`compose.mjs exited ${r.code}${j?.error ? `: ${j.error}` : ''}`, tail(r.text)]);
     for (const w of j?.warnings ?? []) warn(`render: ${w}`);
@@ -543,13 +630,82 @@ if (doRender) {
   });
 
   // ---------------------------------------------------------------- 9 deliver
-  if (doDeliver) await deliver(master);
+  if (doDeliver && !compare) await deliver(master);
+  else if (compare) stages.push({ name: 'deliver', sec: 0, note: 'skipped for a comparison run (no PR copy per style)' });
 }
 if (only === 'deliver') {
   const master = join(paths.out, `${name}.mp4`);
   specPath = join(paths.build, 'video.json');
   if (!existsSync(master) || !existsSync(specPath)) fail('deliver', `nothing to deliver yet: needs ${master} and ${specPath} (run without --only first)`);
   await deliver(master);
+}
+
+// Render the demo once per style into out/styles/<style>.mp4, one after the
+// other (the encoder is the limit, so parallel renders would not be faster),
+// then the comparison sheet and the picker page.
+async function compareStyles() {
+  const stylesDir = join(paths.out, 'styles');
+  mkdirSync(stylesDir, { recursive: true });
+  const done = [];
+  const specs = {};
+  await stage('render', async () => {
+    for (const n of styleNames) {
+      const t = Date.now();
+      const file = join(stylesDir, `${n}.mp4`);
+      rmSync(file, { force: true });
+      // Each style renders its own resolved spec: the timeline (transition lengths) and camera follow that style.
+      const sp = join(paths.build, 'styles', `${n}.video.json`);
+      mkdirSync(dirname(sp), { recursive: true });
+      writeFileSync(sp, `${JSON.stringify(resolveSpec(demo, allAspects, { style: n }), null, 2)}\n`);
+      const cam = await run(`camera-${n}`, process.execPath, [join(HERE, 'auto-camera.mjs'), sp, '--public', dir]);
+      if (cam.code !== 0) return fail('render', [`style "${n}": auto-camera exited ${cam.code}`, tail(cam.text)]);
+      specs[n] = JSON.parse(readFileSync(sp, 'utf8'));
+      const r = await run(`render-${n}`, process.execPath, [COMPOSE, sp, '--out', file, '--clips', dir, ...styleFlag(n), '--json'], { timeoutSec: 1800 });
+      const j = lastJson(r.text);
+      if (r.code !== 0 || j?.ok === false) return fail('render', [`style "${n}": compose.mjs exited ${r.code}${j?.error ? `: ${j.error}` : ''}`, tail(r.text)]);
+      if (!existsSync(file)) return fail('render', `style "${n}": the renderer reported success but ${file} does not exist`);
+      for (const w of j?.warnings ?? []) warn(`render (${n}): ${w}`);
+      const sec = secs(t);
+      say(`  ${n.padEnd(12)} ${String(sec).padStart(6)}s`);
+      done.push({ name: n, file, sec });
+    }
+    summary.styles = done.map(({ name: n, file, sec }) => ({ name: n, file, sec }));
+    summary.renderSec = +done.reduce((a, d) => a + d.sec, 0).toFixed(1);
+    return `${done.length} styles, ${summary.renderSec}s in all (${done.map((d) => `${d.name} ${d.sec}s`).join(', ')})`;
+  });
+
+  const sheetFile = join(paths.out, `${name}-styles.png`);
+  const pickerFile = join(paths.out, `${name}-styles.html`);
+  const spec = JSON.parse(readFileSync(specPath, 'utf8'));
+  await stage('sheet', async () => {
+    // The same moments in every row, picked on each style's own timeline (its
+    // transitions are a different length, so the same moment is at a different time).
+    const timeline = (n) => (n === 'studio' ? specs[n] : fillTiming(specs[n], resolveStyle(specs[n])));
+    const per = Object.fromEntries(done.map((d) => [d.name, chooseMoments(timeline(d.name))]));
+    const keys = per[done[0].name].map((m) => m.key).filter((k) => done.every((d) => per[d.name].some((m) => m.key === k)));
+    for (const d of done) d.moments = keys.map((k) => per[d.name].find((m) => m.key === k));
+    const moments = done[0].moments;
+    const probe = spawnSync('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'csv=p=0', done[0].file], { encoding: 'utf8' });
+    const [w, h] = probe.stdout.trim().split(',').map(Number);
+    const r = await makeSheet({
+      styles: done, moments, out: sheetFile, workDir: join(paths.build, 'styles-sheet'), run,
+      aspect: w && h ? w / h : 16 / 9, label: `${name}: ${done.map((d) => d.name).join(' / ')}`,
+    });
+    if (!r.ok) return fail('sheet', r.error);
+    summary.sheet = sheetFile;
+    summary.moments = moments;
+    return `${moments.length} moments x ${done.length} styles (${moments.map((m) => `${m.t}s ${m.label}`).join(', ')})`;
+  });
+  await stage('picker', () => {
+    const info = Object.fromEntries(known.styles.map((x) => [x.name, x]));
+    writeFileSync(pickerFile, pickerHtml({
+      title: `${name}: pick a style`, htmlPath: pickerFile, fps: spec.fps || 60,
+      styles: done.map((d) => ({ ...d, description: info[d.name]?.description, suits: info[d.name]?.suits })),
+    }));
+    summary.picker = pickerFile;
+    Object.assign(summary.outputs, { styles: stylesDir, styleSheet: sheetFile, picker: pickerFile });
+    return `${pickerFile} (not opened; it is a local file for you to open)`;
+  });
 }
 
 async function deliver(master) {
@@ -574,6 +730,7 @@ async function finish() {
   summary.ok = true;
   summary.totalSec = secs();
   const looks = [];
+  if (summary.sheet) looks.push(summary.sheet);
   if (summary.outputs.sheet) looks.push(summary.outputs.sheet);
   const fresh = summary.recorded.length ? summary.recorded : (used ?? []);
   for (const n of fresh) if (looks.length < 3 && existsSync(`${clipFile(n)}.sheet.png`)) looks.push(`${clipFile(n)}.sheet.png`);
@@ -583,6 +740,13 @@ async function finish() {
   } else {
     console.log(`\n${name ?? 'demo'}: done in ${summary.totalSec}s`);
     for (const s of stages) console.log(`  ${s.name.padEnd(9)} ${String(s.sec).padStart(6)}s  ${s.note}`);
+    if (summary.style && (opt.style || demo?.style !== undefined)) console.log(`  style     ${summary.style}${opt.style ? ' (from --style)' : ''}`);
+    if (summary.styles) {
+      console.log(`styles compared (${summary.renderSec}s of rendering, one after another):\n${summary.styles.map((d) => `  ${d.name.padEnd(12)} ${String(d.sec).padStart(6)}s  ${relative(dir, d.file)}`).join('\n')}`);
+      console.log('  delivery was skipped: a comparison run makes no PR copy per style');
+      const cmd = `node ${process.argv[1]} ${demoFile}`;
+      console.log(`pick one: open ${summary.picker} in a browser (numbers or arrows flip styles, space plays).\nThen render the chosen one for real: ${cmd} --style <name>   (or put "style": "<name>" in demo.json)`);
+    }
     if (summary.reused.length) console.log(`  reused    ${summary.reused.join(', ')} (unchanged; --retake <name> after changing the app)`);
     if (warnings.length) console.log(`warnings (${warnings.length}):\n${warnings.map((w) => `  - ${w}`).join('\n')}`);
     const o = summary.outputs;

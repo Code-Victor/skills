@@ -27,7 +27,7 @@ A step may combine keys; they run in this order: `camera`, `wait`,
 | `key` | `{ "key": "Escape" }` | Press a key. |
 | `scroll` | `{ "scroll": 600, "dur": 1 }` | Wheel-scroll by that many px over `dur` (default 0.8), at the cursor. |
 | `eval` | `{ "eval": "document.body.dataset.x = 1" }` | Run JS in the page (awaits promises). If it throws, the take warns with the step number and carries on; `"fatal": true` makes it fail the take. |
-| `mark` | `{ "mark": "error-toast", "target": { "selector": "[data-sonner-toast]" } }` | Record where something is, for a callout or for the auto-camera to look at. Doesn't move the cursor. Without `target` it uses the step's own `move` or `click` target. `"look": false` keeps the camera where it is (a toast while the shot stays wide). |
+| `mark` | `{ "mark": "error-toast", "target": { "selector": "[data-sonner-toast]" } }` | Record where something is, for a callout or for the auto-camera to look at. Doesn't move the cursor. Without `target` it uses the step's own `move` or `click` target. A mark right after a click or typing is that action's result: the camera moves to it after the action. A mark a callout uses is always framed; `"look": false` keeps the camera off a mark no callout uses (one that only times a caption by hand). |
 | `camera` | `{ "camera": "wide", "wait": 1 }` | Tell `auto-camera.mjs` to pull back out here: a drawer, dialog or new page is about to fill the frame. Logged before the step's `wait`. Only `"wide"` exists. |
 | `redact` | `{ "redact": "td.email" }` | Blur matching elements from here on. The take option `redact` blurs from the start. |
 
@@ -39,7 +39,7 @@ Options that go on any step:
 | `cps` | `type` | Characters a second |
 | `instant` | `type` | Insert the text at once |
 | `target` | `mark` | What to mark |
-| `look` | `mark` | `false`: record the box without drawing the camera to it |
+| `look` | `mark` | `false`: record the box without drawing the camera to it. Ignored when a callout uses the mark (a callout is always framed) |
 | `fatal` | `eval` | Fail the take if the code throws |
 | `actionTimeout` | `move`, `click`, `mark` | Seconds to wait for the target to be actionable, instead of the default |
 

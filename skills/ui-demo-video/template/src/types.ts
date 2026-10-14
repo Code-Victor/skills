@@ -74,10 +74,21 @@ export type Callout = {
   delaySec?: number;
   /** With `mark`: the longest it stays. Default 2.5. */
   maxSec?: number;
-  /** A short chip next to the box. */
+  /** A short label, hung from a hand-drawn arrow to the mark (a chip next to the box for ring and spotlight). */
   label?: string;
-  /** ring (default): a soft outline. spotlight: dims everything else too. */
-  style?: "ring" | "spotlight";
+  /**
+   * The compositor (compose.mjs) draws a hand-drawn annotation in the style's ink, after Rough Notation:
+   * circle (default): the thing that changed. underline, highlight: text. box: a region. bracket: a group.
+   * strike, cross: what was removed. ring: a soft outline. spotlight: dims everything else too.
+   * This Remotion template draws ring for every annotation and spotlight as it always has.
+   */
+  style?: "circle" | "box" | "underline" | "highlight" | "bracket" | "strike" | "cross" | "ring" | "spotlight";
+  /** With style "bracket": the sides it draws. Default ["left", "right"]. */
+  brackets?: Array<"left" | "right" | "top" | "bottom">;
+  /** false: the label without the arrow. Default true when there is a label. */
+  arrow?: boolean;
+  /** Where the label goes. Default: the side with room, all the time it shows (above, then below, right, left). */
+  side?: "above" | "below" | "left" | "right";
 };
 
 /** A caption that shows from atSec until the next one, or the scene's end. */
@@ -223,11 +234,21 @@ export type Transition =
   | TransitionName
   | { type: TransitionName; sec?: number; direction?: "left" | "right" | "up" | "down" };
 
+/**
+ * The look of the fast renderer (scripts/compose.mjs): a style name such as
+ * "studio" (the default, today's look) or "midnight", or { preset, overrides }
+ * with token overrides (see scripts/compositor/styles/README.md). The Remotion
+ * template ignores this key and always renders the studio look.
+ */
+export type StyleChoice = string | { preset?: string; overrides?: Record<string, unknown> };
+
 export type VideoSpec = {
   width: number;
   height: number;
   fps: number;
   theme: Theme;
+  /** Optional. Only the compose.mjs renderer reads it; Remotion renders the base look. */
+  style?: StyleChoice;
   /** Used between scenes unless a scene pair overrides it. */
   transition: Transition;
   /**

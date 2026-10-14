@@ -10,8 +10,10 @@ export const TRANSITIONS = ['zoom-blur', 'fade', 'cut', 'whip-pan', 'push-throug
 export const resolveGap = (spec, i) => {
   const t = spec.transitions?.[i] ?? spec.transition;
   const o = typeof t === 'string' ? { type: t } : t;
-  const sec = o.type === 'cut' ? 0 : (('sec' in o && o.sec) || NATURAL_SEC[o.type] || spec.transitionSec);
-  return { type: o.type, sec, direction: 'direction' in o ? o.direction : undefined };
+  // spec.style is the resolved style (compose.mjs puts it there): it may add transitions of its own
+  const custom = spec.style?.transition?.custom?.[o.type];
+  const sec = o.type === 'cut' ? 0 : (('sec' in o && o.sec) || custom?.sec || NATURAL_SEC[o.type] || spec.transitionSec);
+  return { type: o.type, sec, direction: 'direction' in o ? o.direction : undefined, custom, stepped: !!(custom?.stepped ?? o.stepped ?? spec.style?.transition?.stepped) };
 };
 
 /** Frames a gap eats: the overlap between the two scenes it joins. */

@@ -117,7 +117,96 @@ export const spring = ({ frame, fps, config = {}, durationInFrames }) => {
 // ---------------------------------------------------------------- camera
 // scenes.tsx: moves eases in and out; "holding" is two equal keyframes.
 const CAMERA_EASE = bezier(0.65, 0, 0.35, 1);
-export const cameraAt = (moves, frame, fps) => {
+
+/**
+ * The easing of one camera move, from the style's `camera.ease` token:
+ * { type: 'bezier', curve: [x1, y1, x2, y2] } or { type: 'spring', stiffness, damping, mass }.
+ * A spring ease is the step response of that spring, stretched so it has settled
+ * exactly when the move's time is up (the keyframe's atSec stays "arrive by").
+ * Overdamped springs (e.g. 320 / 40 / 0.92, the open-source editors' camera) ease
+ * out without overshoot; underdamped ones overshoot a little (the pan stays clamped).
+ */
+const easeCache = new Map();
+export const makeCameraEase = (tok) => {
+  if (!tok || tok.type !== 'spring') return tok?.curve ? bezier(...tok.curve) : CAMERA_EASE;
+  const { stiffness = 320, damping = 40, mass = 0.92 } = tok, key = `${stiffness}/${damping}/${mass}`;
+  if (easeCache.has(key)) return easeCache.get(key);
+  const w0 = Math.sqrt(stiffness / mass), z = damping / (2 * Math.sqrt(stiffness * mass));
+  const step = (t) => {                     // unit step response, x(0) = 0, x(inf) = 1
+    if (z < 1) { const wd = w0 * Math.sqrt(1 - z * z); return 1 - Math.exp(-z * w0 * t) * (Math.cos(wd * t) + (z * w0 / wd) * Math.sin(wd * t)); }
+    if (z === 1) return 1 - Math.exp(-w0 * t) * (1 + w0 * t);
+    const s = Math.sqrt(z * z - 1), r1 = -w0 * (z - s), r2 = -w0 * (z + s);
+    return 1 - (r2 * Math.exp(r1 * t) - r1 * Math.exp(r2 * t)) / (r2 - r1);
+  };
+  let T = 0.05;
+  while (T < 10 && Math.abs(1 - step(T)) > 0.002) T += 1 / 240;
+  const end = step(T);
+  const f = (u) => (u <= 0 ? 0 : u >= 1 ? 1 : step(u * T) / end);
+  easeCache.set(key, f);
+  return f;
+};
+
+// ---------------------------------------------------------------- seeded noise
+// Deterministic "random": the same seed and keys always give the same number
+// (the paper style's per-pose jitter). Never Math.random.
+export const seeded = (seed, ...keys) => {
+  let h = (seed >>> 0) ^ 0x9e3779b9;
+  for (const k of keys) { h = Math.imul(h ^ (Number(k) | 0), 0x85ebca6b); h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35); h ^= h >>> 16; }
+  return () => { h = (h + 0x6d2b79f5) | 0; let t = Math.imul(h ^ (h >>> 15), 1 | h); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+};
+
+// ---------------------------------------------------------------- the far pan
+// Between two zoomed-in keys more than about a view apart, the camera takes van Wijk & Nuij's smooth
+// pan-zoom path ("Smooth and efficient zooming and panning", 2003): it pulls out on the way and back in
+// on the one eased parameter, so the target comes into view early and there is no stop in the middle.
+// A view is { x, y, w }: its centre, and its size as a fraction of the space it moves in (w = 1 / zoom),
+// x and y in the same fractions, so "one view" is w along either axis. "Far" is measured between the
+// keys' focus points (what the camera was asked to look at); the path runs between the views the
+// camera really shows there (kept inside the recording), which can be closer.
+const RHO = 1.4;    // how far the path pulls out: higher pulls out more (the paper's comfortable 1.4)
+const FAR = 1;      // two keys whose focus points are further apart than this many views (along x or y) take the path
+const vwPlan = (a, b, rho) => {
+  const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy), r2 = rho * rho, w0 = a.w, w1 = b.w;
+  const r0 = -Math.asinh((w1 * w1 - w0 * w0 + r2 * r2 * d * d) / (2 * w0 * r2 * d));
+  const r1 = -Math.asinh((w1 * w1 - w0 * w0 - r2 * r2 * d * d) / (2 * w1 * r2 * d));
+  return { a, b, dx, dy, d, w0, r0, rho, S: (r1 - r0) / rho, peak: r0 <= 0 && r1 >= 0 ? w0 * Math.cosh(r0) : Math.max(w0, w1) };
+};
+const vwAt = (p, k) => {
+  if (k <= 0) return p.a;
+  if (k >= 1) return p.b;
+  const s = p.rho * k * p.S + p.r0, u = (p.w0 / (p.rho * p.rho * p.d)) * (Math.cosh(p.r0) * Math.tanh(s) - Math.sinh(p.r0));
+  return { x: p.a.x + p.dx * u, y: p.a.y + p.dy * u, w: (p.w0 * Math.cosh(p.r0)) / Math.cosh(s) };
+};
+const farPlans = new Map();
+/**
+ * The far pan from view a to view b, as k (0..1, the eased time) -> view; null unless both are zoomed in
+ * and their focus points `fa`, `fb` ({ x, y }, default the views' centres) are more than a view apart.
+ */
+export const farPath = (a, b, fa = a, fb = b) => {
+  if (a.w > 0.95 || b.w > 0.95 || Math.max(Math.abs(fb.x - fa.x), Math.abs(fb.y - fa.y)) <= FAR * Math.max(a.w, b.w)) return null;
+  if (Math.hypot(b.x - a.x, b.y - a.y) < 1e-4) return null;
+  const key = [a.x, a.y, a.w, b.x, b.y, b.w].join();
+  let p = farPlans.get(key);
+  if (!p) {
+    p = vwPlan(a, b, RHO);
+    if (p.peak > 1) {   // never pull out past the whole frame: the most rho that peaks at zoom 1
+      let lo = 0.02, hi = RHO;
+      for (let i = 0; i < 30; i++) { const m = (lo + hi) / 2; if (vwPlan(a, b, m).peak > 1) hi = m; else lo = m; }
+      p = vwPlan(a, b, lo);
+    }
+    if (farPlans.size > 256) farPlans.clear();
+    farPlans.set(key, p);
+  }
+  return (k) => vwAt(p, k);
+};
+
+/** Where the inside camera really looks: cameraTransform keeps the view inside the recording. */
+const insideView = (c) => {
+  const z = Math.max(1, c.zoom), h = 1 / (2 * z), cl = (v) => Math.min(1 - h, Math.max(h, v));
+  return { x: cl(c.x), y: cl(c.y), w: 1 / z };
+};
+
+export const cameraAt = (moves, frame, fps, ease = CAMERA_EASE) => {
   const keys = [...(moves ?? [])].sort((a, b) => a.atSec - b.atSec);
   const at = (k) => ({ x: k.x ?? 0.5, y: k.y ?? 0.5, zoom: k.zoom ?? 1 });
   if (keys.length === 0) return { x: 0.5, y: 0.5, zoom: 1 };
@@ -126,7 +215,9 @@ export const cameraAt = (moves, frame, fps) => {
   for (let i = 1; i < keys.length; i++) {
     if (t <= keys[i].atSec) {
       const a = at(keys[i - 1]), b = at(keys[i]);
-      const k = CAMERA_EASE((t - keys[i - 1].atSec) / Math.max(0.001, keys[i].atSec - keys[i - 1].atSec));
+      const k = ease((t - keys[i - 1].atSec) / Math.max(0.001, keys[i].atSec - keys[i - 1].atSec));
+      const far = farPath(insideView(a), insideView(b), a, b);
+      if (far) { const v = far(k); return { x: v.x, y: v.y, zoom: 1 / v.w }; }
       return { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k, zoom: a.zoom + (b.zoom - a.zoom) * k };
     }
   }
@@ -141,4 +232,63 @@ export const cameraTransform = (cam, w, h) => {
     tx: Math.min(0, Math.max(w - w * z, w / 2 - cam.x * w * z)),
     ty: Math.min(0, Math.max(h - h * z, h / 2 - cam.y * h * z)),
   };
+};
+
+/**
+ * The camera in fill mode (Cap, Screen Studio): the zoom grows the WHOLE window over a fixed background
+ * instead of cropping inside it. It is a plain camera on the composition at rest: a view of the canvas,
+ * centre c and zoom z, and a point p of the window at rest lands on the screen at (p - c) * z + the
+ * canvas centre, i.e. (tx, ty) + z * p. `view` is the recording's rectangle at rest, W x H the canvas.
+ *
+ * Each key (x, y, zoom) is solved into a view once: where the view is smaller than the recording along
+ * an axis it looks at the focus but stays inside the recording (no background on that side), where it
+ * is larger it keeps the recording centred, inside the canvas. Zoom 1 is the canvas itself (identity).
+ * Between keys c and z are interpolated on the same eased parameter as inside mode (the far pan too);
+ * a view edge is c +- size / (2z), convex in the parameter, so the view stays inside the bounds both
+ * keys keep and nothing needs clamping per frame (a last clamp to the canvas only catches a spring that
+ * overshoots). Smooth in time, so a zoom never wobbles.
+ *
+ * From the screen rectangle of the recording: `fill` (0 at rest, 1 once it covers the frame: the
+ * smaller of the two axes' covered share of their margins at rest) and `round`, the corner radius's
+ * scale: 1 at rest, easing to 0 as the nearest side reaches the frame's edge, so a rounded corner never
+ * opens a notch of background there.
+ */
+export const fillPose = (moves, frame, fps, ease = CAMERA_EASE, view, W, H) => {
+  const keys = [...(moves ?? [])].sort((a, b) => a.atSec - b.atSec);
+  const focus = (k) => ({ x: (view.left + (k.x ?? 0.5) * view.w) / W, y: (view.top + (k.y ?? 0.5) * view.h) / H });
+  const solve = (k) => {
+    const z = Math.max(1, k.zoom ?? 1), f = focus(k);
+    const axis = (lo, size, C, fc) => {
+      const h = C / (2 * z), cl = (v, a, b) => Math.min(b, Math.max(a, v));
+      return h <= size / 2 ? cl(fc, lo + h, lo + size - h) : cl(lo + size / 2, h, C - h);
+    };
+    return { x: axis(view.left, view.w, W, f.x * W) / W, y: axis(view.top, view.h, H, f.y * H) / H, w: 1 / z };
+  };
+  const t = frame / fps;
+  let v = { x: 0.5, y: 0.5, w: 1 };
+  if (keys.length && t <= keys[0].atSec) v = solve(keys[0]);
+  else if (keys.length) {
+    v = solve(keys[keys.length - 1]);
+    for (let i = 1; i < keys.length; i++) {
+      if (t > keys[i].atSec) continue;
+      const a = solve(keys[i - 1]), b = solve(keys[i]);
+      const k = ease((t - keys[i - 1].atSec) / Math.max(0.001, keys[i].atSec - keys[i - 1].atSec));
+      const far = farPath(a, b, focus(keys[i - 1]), focus(keys[i]));
+      if (far) v = far(k);
+      else { const za = 1 / a.w, zb = 1 / b.w; v = { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k, w: 1 / (za + (zb - za) * k) }; }
+      break;
+    }
+  }
+  const z = Math.max(1, 1 / v.w), hx = W / (2 * z), hy = H / (2 * z);
+  const cx = Math.min(W - hx, Math.max(hx, v.x * W)), cy = Math.min(H - hy, Math.max(hy, v.y * H));
+  const tx = W / 2 - cx * z, ty = H / 2 - cy * z;
+  // the recording on the screen, and its margins against the frame's edges (as shares of the margins at rest)
+  const x0 = tx + z * view.left, x1 = x0 + z * view.w, y0 = ty + z * view.top, y1 = y0 + z * view.h;
+  const restL = view.left, restR = W - view.left - view.w, restT = view.top, restB = H - view.top - view.h;
+  const share = (g, rest) => (rest > 0.5 ? Math.min(1, Math.max(0, g / rest)) : 0);
+  const kx = restL + restR > 0.5 ? 1 - Math.min(1, (Math.max(0, x0) + Math.max(0, W - x1)) / (restL + restR)) : 1;
+  const ky = restT + restB > 0.5 ? 1 - Math.min(1, (Math.max(0, y0) + Math.max(0, H - y1)) / (restT + restB)) : 1;
+  const edge = 1 - Math.min(share(x0, restL), share(W - x1, restR), share(y0, restT), share(H - y1, restB));
+  const s = Math.min(1, Math.max(0, edge * 2 - 1));
+  return { z, tx, ty, fill: Math.min(kx, ky), round: 1 - s * s * (3 - 2 * s) };
 };

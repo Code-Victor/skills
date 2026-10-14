@@ -58,14 +58,15 @@ Make the still with `node scripts/capture.mjs shot --url <u> --out
 | Option | Does |
 |---|---|
 | `aspect` | The recording's width / height. Leave it out: the runner sets it from the take, and for a file given by `src` the renderer reads it from the file. Write it only to force a different shape |
-| `tag`, `caption` | One caption under the frame, with a coloured label ("Before", "After") |
+| `tag`, `caption` | One caption with a label ("Before", "After"). Where it sits and how it enters depend on the style (see Captions) |
 | `captions` | `[{ "atSec", "text", "tag"? }]`: several in turn, for a scene that walks through steps. Each shows until the next |
 | `autoCamera` | `true` or options: let `scripts/auto-camera.mjs` write `moves` from the take's events file |
 | `moves` | Camera keyframes `{ atSec, x, y, zoom }` (x, y = focus as fractions of the recording) |
-| `callouts` | `[{ "mark" or "atSec" + "box", "label"?, "style"? }]`: a ring (or `"style": "spotlight"`, which also dims the rest) that rides with the camera |
+| `camera` | `"fill"` (a zoom grows the whole window until the recording fills the frame) or `"inside"` (the zoom crops inside a fixed window). Default: the spec's top-level `camera`, else the style's (`studio` and `midnight` fill). Clip and image scenes; no effect on `frame: "full"` |
+| `callouts` | `[{ "mark" or "atSec" + "box", "label"?, "style"?, "brackets"?, "arrow"?, "side"? }]`: a hand-drawn mark (a circle unless `style` names another) drawn on in the style's ink, with the label on an arrow; it rides with the camera (see Callouts) |
 | `playbackRate` | Play faster: `1.2` covers 1.2 s of recording per second of video. Good for typing and loading; say so if time matters. Clip scenes only |
 | `trimStartSec` | Skip the start of the recording |
-| `frame` | `flat` (default), `full` (edge to edge, no window) or `stage` (tilted 3D; hero moments only, and the one look only the Remotion renderer draws: the default renderer draws it as `flat` and warns) |
+| `frame` | `flat` (default), `full` (edge to edge, no window, no logo) or `stage` (tilted 3D; hero moments only, and the one look only the Remotion renderer draws: the default renderer draws it as `flat` and warns) |
 
 ## The auto-camera
 
@@ -98,33 +99,124 @@ alternative, a little gentler for dense product UI):
   about 40% of the view, never tighter than 2x. Pushes under 1.3x are dropped
   (a wobble), as are shots that can't hold for 1 s (a twitch), and actions in
   the scene's last second.
+- **Cause, then effect.** A mark right after a click or typing is its result
+  (a toast, a saved row). The camera stays on the action for 0.6 s (its own
+  feedback), then moves to the result and holds it while its callout shows
+  (or for the usual 2 s). When the two fit one view, it frames both instead.
+  A callout's mark is always a target, whatever its `look`, so a callout is
+  never drawn where the camera isn't looking; the callout starts as the
+  camera lands.
+- **Far pans.** A pan between two zoomed-in spots more than a view apart
+  takes about 0.7 s and flies on van Wijk and Nuij's smooth pan-zoom path: it
+  pulls out a little on the way and back in, with no stop in the middle, so
+  the target comes into view early. Shorter pans go straight.
 - **Between shots.** Close ones pan straight on; far ones pull out first.
 
 Options per scene: `zoom`, `maxZoom`, `minZoom`, `lead`, `hold`, `gap`,
 `reach`, `pad`, `outSec`, `tail`, `minHold`, `minActions` (2 = never zoom on a
-lone click), `endWide`. Then check the result on the contact sheet
+lone click), `endWide`, `see` (0.6: seconds on an action before moving to its
+result), `farSec` (0.7: length of a far pan). Then check the result on the contact sheet
 (`out/<name>-sheet.png`): if a caption talks about something the camera isn't
 on, mark it in the steps or add a key.
+
+How a zoom looks is the style's: in `studio` and `midnight` the whole window
+grows over the background until the recording fills the frame (from about
+1.2x for a 16:9 recording, 1.3x for 16:10), sliding toward the focus; in the
+other styles the window stays put and the zoom crops inside it. The same
+`moves` work in both; `"camera": "inside"` or `"fill"` on the spec or a scene
+changes it (`styles.md`).
 
 ## Captions
 
 - One short sentence, sentence case, plain words, at most 42 characters a
-  line (Netflix). Say what it does for the user, not how it's built.
+  line and two lines (Netflix, BBC). Say what it does for the user, not how
+  it's built. A caption names what to look at; the story belongs on the title,
+  issue and list cards. Split a longer thought into timed `captions`.
 - Reading speed: 15 to 17 characters a second reads comfortably; 20 is the
-  ceiling for adults. `check-video.mjs` warns past 20, counting the pill's
-  entrance and exit.
+  ceiling for adults. `check-video.mjs` warns past 17, past 42 characters a
+  line and past two lines (a line break you write starts a new line). It
+  takes 0.6 s off each caption's time on screen for its entrance and exit.
 - Each caption needs at least 1.5 s on screen, however short.
-- Captions sit in a band under the frame, never over the UI. They're burned in
-  because Slack and GitHub play videos muted and don't show sidecar tracks;
-  `deliver.mjs` also writes `.vtt` and `.srt` for anywhere that does.
+- Captions stay clear of the action. In `studio` and `midnight` they sit in
+  the strip under the window, and over the recording once a zoom has filled
+  the frame, on a plate that reads over any page; a caption whose spot would
+  cover the action (a callout, where the camera looks, a click) moves to the
+  top of the frame for its whole time on screen. In `terminal` they sit in a
+  band under the window (on a dark scrim over a `frame: "full"` clip); in
+  `editorial` they are margin notes in a column beside the recording; in
+  `sketch` they are written into the strip of the photo print. They're burned
+  in because Slack and GitHub play videos muted and
+  don't show sidecar tracks; `deliver.mjs` also writes `.vtt` and `.srt` for
+  anywhere that does.
+- Some styles type the caption instead of fading it in: `terminal` at 50
+  characters a second after a 0.4 s delay, `sketch` at 16 a second after
+  0.3 s, faster (up to 44) when 16 would not leave about 1.4 s to read.
+  A caption is complete after its length divided by that rate plus the delay,
+  so a long caption on a short scene may still be appearing when the scene
+  ends. `sketch` also shortens a caption that will not fit in two lines with
+  an ellipsis. `check-video.mjs` does not know about typing speed: its reading
+  check counts from the caption's start, not from its last word.
 - `demo.mjs` lists a caption that is too fast or too short in its summary;
   fix the text or give the scene more time.
+
+## Emphasis
+
+`*word*` in a title, a caption, a list item or a line of the issue card marks
+one accented word: the accent colour in most styles, italic in `editorial`. Write
+`\*` for a real asterisk. A lone `*` with no partner stays as typed. The
+`.vtt` and `.srt` files, the chapters and the reading-speed check ignore the
+markers.
+
+```json
+{ "type": "clip", "take": "after", "durationSec": 7, "caption": "A *toast* confirms the invite" }
+```
+
+## Transitions and the style
+
+The names (`zoom-blur`, `focus-pull`, `push-through`, `whip-pan`, `fade`,
+`cut`) and the per-gap `transitions` list mean the same in every style, but
+what they look like is the style's: `studio` blurs and zooms, `midnight` and
+`editorial` tone them down, and `terminal` and `sketch` redraw them in their own
+language (a caret wipe, a line repaint, a line scroll, a hard slide and a
+stepped crossfade in `terminal`; a nudge of the paper and a cut in `sketch`).
+Their lengths follow the style too, unless you write `sec`. A style may also add a transition of its
+own that you can name only under that style (`page-slide` in `editorial`,
+`caret-wipe` in `terminal`, `paper-swap` in `sketch`). See `styles.md`.
 
 ## Callouts
 
 Use one when the thing the caption names is small (a toast, a checkbox, a
-note): a ring around it for 2 to 3 s. No more than one on screen at a time;
-labels under 60 characters.
+note): a mark drawn round it by hand for 2 to 3 s. No more than one on screen
+at a time; labels under 40 characters (two or three words read best).
+
+Pick the mark by what you are pointing at (`"style"`):
+
+| `style` | Use it for |
+|---|---|
+| `circle` (default) | The thing that changed: a toast, a button, a new badge |
+| `underline` | A word or a number in text |
+| `highlight` | A line of text, like a marker (multiplied, so the text stays dark; best on a light UI, use `underline` on a dark one) |
+| `box` | A region: a card, a panel, a form |
+| `bracket` | A group of rows or items; `"brackets": ["left", "right"]` (the default) or any of `left`, `right`, `top`, `bottom` |
+| `strike` | Something removed or replaced, in text |
+| `cross` | Something removed: a button, a step, a field |
+| `ring`, `spotlight` | The older highlight: a soft ring, or a ring that also dims the rest (they draw exactly as before) |
+
+The mark draws itself on like a pen (about 0.8 s: each stroke in turn, the
+way Rough Notation does it), then an arrow from the label, then the label;
+all of it fades out in 0.2 s. A label sits where it has room for the whole
+time the callout shows (above, below, right, left in that order, never over
+the mark, never off the picture); `"side": "below"` chooses for you, and
+`"arrow": false` keeps the label without the arrow. The mark follows the
+recording through zooms and pans with its line the same width on screen, and
+the label keeps its size. Each style has its own ink and label (see
+`styles.md`): a blue pen and a handwritten note in `studio`, a pale pen with a
+dark edge on dark glass in `midnight`, a vermilion pencil and an italic margin
+note in `editorial`, a green pen and a typed `# comment` in `terminal` (and its
+corner brackets for `bracket`), a red pencil and a paper note in `sketch`.
+
+The marks are Rough Notation's (MIT, Preet Shihn, on rough.js), ported to
+paint in the renderer, so the same video renders the same pixels every time.
 
 - **From a mark** (preferred): mark it in the steps
   (`{ "mark": "toast", "target": {...} }`) and name it:
@@ -132,9 +224,13 @@ labels under 60 characters.
   sets `box`, `atSec` and `forSec` on every run: it appears at the mark
   (`delaySec` later, if given) and stays up to `maxSec` (2.5), but ends just
   after the next click, which usually changes what it circles. A mark also
-  draws the camera.
-  For something the camera shouldn't move to (a toast while the shot stays
-  wide), mark it with `"look": false`.
+  draws the camera: a mark a callout uses is always framed, and when the
+  camera has to move to it first, the callout starts as the camera lands.
+  The mark is drawn in the callout's `style` (a hand-drawn circle by default,
+  in the style's own ink; see the table above).
+  `"look": false` only matters for a mark no callout uses: it records the
+  place without moving the camera. `check-video.mjs` warns when a callout
+  shows for over 0.3 s mostly off the frame (hand-made boxes and moves).
 - **By hand**: `{ "atSec": 14.3, "forSec": 2.1, "box": [x, y, w, h] }`, box
   as fractions of the recording. Measure it on a frame of the raw clip.
 
