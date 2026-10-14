@@ -74,7 +74,7 @@ export default {
     tag: { style: 'word', weight: 600 },     // word (coloured) | chip | bracket
   },
 
-  title: { size: 0.042, weight: 600, align: 'center', subtitleSize: 0.0155, subtitleWeight: 500, subtitleOpacity: 0.6, subtitleEnter: 'fade', gap: 0.008, measure: 'estimate', padLeft: 0.08,
+  title: { size: 0.042, weight: 600, align: 'center', subtitleSize: 0.0155, subtitleWeight: 500, subtitleOpacity: 0.66, subtitleEnter: 'fade', gap: 0.008, measure: 'estimate', padLeft: 0.08,
     enter: null,                    // the entrance when a scene gives no `effect`: soft-blur-in (default) | word-push | micro-scale-fade | type | lines
     maxEnterSec: null,              // the whole entrance is sped up until it finishes within this many seconds (an 80-character title in a 3 s scene)
     maxWidth: 0.8, lineHeight: 1.12,   // type and lines wrap the text: width as a fraction of W
@@ -84,10 +84,10 @@ export default {
   card: {
     width: 1040, padX: 60, padY: 52, radius: 28, gap: 22, fill: '#fff',
     shadow: '0 0 0 1px rgba(0,0,0,0.06),0 24px 70px rgba(0,0,0,0.16)', border: null,
-    metaSize: 24, metaOpacity: 0.55, statusSize: 21, statusAlpha: 24 / 255, titleSize: 48, quoteSize: 30, reporterSize: 22, quoteBar: 4,
+    metaSize: 24, metaOpacity: 0.66, statusSize: 21, statusAlpha: 24 / 255, titleSize: 48, quoteSize: 30, reporterSize: 22, quoteBar: 4,
     rowEnter: 'rise',
   },
-  list: { width: 1100, gap: 30, titleSize: 60, subtitleSize: 26, subtitleOpacity: 0.55, itemSize: 32, itemGap: 18, itemEnter: 'slide', iconSize: 30, iconAlpha: 31 / 255, align: 'center', numbered: false },
+  list: { width: 1100, gap: 30, titleSize: 60, subtitleSize: 26, subtitleOpacity: 0.66, itemSize: 32, itemGap: 18, itemEnter: 'slide', iconSize: 30, iconAlpha: 31 / 255, align: 'center', numbered: false },
 
   callout: {
     mark: 'ring',                   // ring | a style builder (build.calloutMark)
@@ -100,7 +100,7 @@ export default {
     spring: { damping: 200 },       // the house spring for every enter
     poseRate: null,                 // pose sequences: poses a second (default: the clock's, else 10)
     clock: null,                    // { poses: 10, seed: 1, jitterPx: 1.4, jitterDeg: 0.35 }: quantise everything except the recording
-    card: { rise: 14, rows: [0.15, 0.45, 0.65], alpha: [1, 0.85, 0.55] },
+    card: { rise: 14, rows: [0.15, 0.45, 0.65], alpha: [1, 0.85, 0.66] },   // the faintest row still holds 5.9:1 on the white card (0.55 was 4.2:1)
     list: { headRise: 14, start: 0.45, step: 0.16, dx: -18, dy: 0 },   // dx, dy: where an item slides in from, u
     split: { stagger: 4, rise: 16 },
     text: {

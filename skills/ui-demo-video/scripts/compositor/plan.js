@@ -21,7 +21,7 @@
 // All sizes are px at the video's width. For the default (studio) style the CSS
 // is a copy of what the Remotion template puts on screen.
 import { esc, has, ID, r2, richHtml, emChars, emWords, parseEmphasis, sceneLayout, splitBoxes, captionPos, accentOf, tagColorOf, radiusOf, sceneLabel, shellTag, markSize, effectOf, chipKey } from './layout.js';
-import { withAlpha } from './color.js';
+import { withAlpha, mix, ensureContrast } from './color.js';
 
 export { ID, esc, has, accentOf, tagColorOf };
 
@@ -272,7 +272,7 @@ const issueDefault = (c) => {
       ${has(scene.source) || has(scene.id) || has(scene.status) ? `<div style="display:flex;align-items:center;gap:${14 * u}px;font-size:${k.metaSize * u}px;font-weight:600">` : '<div>'}
         ${scene.source ? `<span style="color:${fg};opacity:${k.metaOpacity}">${esc(scene.source)}</span>` : ''}
         ${scene.id ? `<span style="color:${fg}">${esc(scene.id)}</span>` : ''}
-        ${scene.status ? `<span style="margin-left:auto;padding:${6 * u}px ${14 * u}px;border-radius:999px;background:${c.rgba(accent, k.statusAlpha)};color:${accent};font-size:${k.statusSize * u}px">${esc(scene.status)}</span>` : ''}
+        ${scene.status ? `<span style="margin-left:auto;padding:${6 * u}px ${14 * u}px;border-radius:999px;background:${c.rgba(accent, k.statusAlpha)};color:${ensureContrast(accent, mix(k.fill ?? '#ffffff', accent, k.statusAlpha, style.rgb), 4.5, style.rgb)};font-size:${k.statusSize * u}px">${esc(scene.status)}</span>` : ''}
       </div>
       ${has(scene.title) ? `<div class="piece" data-p="title" data-pad="6" style="font-size:${k.titleSize * u}px;font-weight:600;line-height:1.18;color:${fg};text-wrap:balance">${c.rich(scene.title)}</div>` : ''}
       ${scene.quote ? `<div class="piece" data-p="quote" data-pad="6" style="border-left:${k.quoteBar * u}px solid ${quoteColor};padding-left:${26 * u}px;font-size:${k.quoteSize * u}px;line-height:1.45;color:${fg}">“${c.rich(scene.quote)}”</div>` : ''}
