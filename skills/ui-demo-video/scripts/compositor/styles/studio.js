@@ -1,12 +1,17 @@
-// studio: today's look, exactly. Every number below is a literal that used to
-// live in plan.js, scenes.js or gl.js. A new style does not repeat all of this:
-// it names what it changes and `extends` the rest (see styles/README.md).
+// studio: the default look. Every number below is a literal that used to live in
+// plan.js, scenes.js or gl.js. A new style does not repeat all of this: it names
+// what it changes and `extends` the rest (see styles/README.md).
+//
+// The camera fills (camera.mode): at rest a big window with a slim caption strip
+// under it; a zoom grows the whole window until the recording fills the frame.
+// The earlier framing (the zoom inside a fixed 80 % window, 26 px captions) is
+// one override away; references/styles.md gives it.
 //
 // Units: lengths in "u" (px at 1920 wide, scaled with the canvas) unless the
 // name says a fraction of the width (W) or height (H). Times in seconds.
 export default {
   name: 'studio',
-  description: 'The original light look: soft gradient, white window, dark pill captions.',
+  description: 'The default light look: soft gradient, a big white window that a zoom grows until the recording fills the frame, dark pill captions.',
   suits: 'Bug-fix before/afters, feature tours and changelogs read in Slack, PRs and docs.',
 
   palette: {
@@ -40,9 +45,9 @@ export default {
   post: { dither: 0, grain: 0, grainSize: 1.5, grainClock: 'frame', vignette: 0, vignetteSoftness: 0.6 },   // final pass: dither in LSB, grain amplitude 0..1 (grainClock: frame | pose (on motion.clock) | static), vignette strength 0..1
 
   window: {
-    maxWidth: 0.9, maxHeight: 0.8,  // fractions of W and H the whole window may take
-    top: 0.055, align: 'center', margin: 0.05,   // top as a fraction of H; align center|left|right with margin (fraction of W)
-    radius: 0.008,                  // corner radius, fraction of W
+    maxWidth: 0.92, maxHeight: 0.84,   // fractions of W and H the whole window may take: as big as leaves a strip for one caption line (a 16:10 recording is 76 % of W, a 16:9 one 84 %)
+    top: 0.036, align: 'center', margin: 0.05,   // top as a fraction of H; align center|left|right with margin (fraction of W)
+    radius: 0.0115,                 // corner radius, fraction of W (22 px: 2.4 % of a 16:10 window's height; Cap uses 3.75 %)
     fill: '#fff',                   // colour behind the recording
     shadow: '0 0 0 1px rgba(0,0,0,0.06),0 24px 70px rgba(0,0,0,0.22)',   // any CSS box-shadow list
     shadowPad: 130,                 // room around the window for the shadow, px
@@ -60,7 +65,9 @@ export default {
   caption: {
     variant: 'pill',                // pill | glass | plain | bar | mono
     placement: 'under',             // under (in the band below the window) | overlay (inside, at the bottom) | slot (the shell's own strip)
-    align: 'center', size: 0.0135, offset: 0.05, inset: 0.03,   // size: fraction of W; offset: bottom gap when there is no band (H); inset: overlay gap (H)
+    align: 'center', size: 0.0177, offset: 0.05, inset: 0.03,   // size: fraction of W (34 px: it may sit over the recording); offset: bottom gap when there is no band (H); inset: overlay gap (H)
+    top: 0.05,                      // where a caption moves when the action is under its bottom spot: its top edge, fraction of H (title-safe)
+    tagContrast: 4.5,               // tag colours are lifted until they hold this on the plate (pill or glass over white); null keeps them as given
     enter: 'fade', delay: 0.25, exit: 0.35, rise: 0.8,           // enter: fade|blur|rise|type; rise in caption heights
     blurPx: 12, blurSec: 0.22, typeCps: 30, caret: 'bar', caretColor: null,         // blur: start radius and duration; type: chars/s; caret bar|block|none
     maxWidth: null,                 // fraction of W: captions wrap inside this width instead of staying on one line (typed captions follow the lines)
@@ -110,7 +117,10 @@ export default {
       subtitle: { from: 0.7, to: 1.2, rise: 8 },
     },
   },
-  camera: { ease: { type: 'bezier', curve: [0.65, 0, 0.35, 1] }, motionBlur: null },   // ease: bezier | spring {stiffness, damping, mass}; motionBlur: { shutter: 0.5, samples: 6 }
+  camera: {
+    mode: 'fill',                   // fill: the zoom grows the whole window until the recording fills the frame | inside: the zoom crops inside a fixed window. Not inherited: a style that extends this one frames inside unless it says fill
+    ease: { type: 'bezier', curve: [0.65, 0, 0.35, 1] }, motionBlur: null,   // ease: bezier | spring {stiffness, damping, mass}; motionBlur: { shutter: 0.5, samples: 6 }
+  },
 
   transition: {
     default: 'zoom-blur', sec: 0.45, stepped: false,

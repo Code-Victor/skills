@@ -269,7 +269,7 @@ export default {
   post: { dither: 2.5, grain: 0, vignette: 0.4, vignetteSoftness: 0.65 },
 
   window: {
-    top: 0.045, maxHeight: 0.78,           // a 190 px band under the window: room for a two-line caption
+    maxWidth: 0.9, top: 0.045, maxHeight: 0.78,   // a 190 px band under the window: room for a two-line caption
     radius: 0.004, fill: PANEL, shadow: '0 10px 28px rgba(0,0,0,0.5)', shadowPad: 60,
     border: { width: 1, color: HAIR }, highlight: null, insets: [BAR_H, 0, 0, 0], chrome: { kind: 'none' }, drift: null,
   },
@@ -308,7 +308,7 @@ export default {
       subtitle: { from: 0.05, to: 0.1, rise: 0 },
     },
   },
-  camera: { ease: { type: 'spring', stiffness: 400, damping: 52, mass: 1 }, motionBlur: null },
+  camera: { mode: 'inside', ease: { type: 'spring', stiffness: 400, damping: 52, mass: 1 }, motionBlur: null },   // inside: the terminal window stays put, the zoom crops in it
 
   transition: {
     default: 'caret-wipe', sec: 0.5, stepped: true,
