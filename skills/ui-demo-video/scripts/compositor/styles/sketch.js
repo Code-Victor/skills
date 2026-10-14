@@ -558,7 +558,7 @@ const chipBuilder = (c) => {
   const o = { family, weight, size, color: INK, accent, seed, slant: 1.8, base: size * 0.02, lh: 1.12 };
   const rows = parts.map((p, k) => handLine(p, { ...o, i0: k * 50 })).join('');
   const note = `<div style="position:absolute;left:${n2(noteX)}px;top:${n2(noteY)}px;width:${n2(noteW)}px;height:${n2(noteH)}px">${paperImg({ w: noteW, h: noteH, rot, radius: 2.5 * u, shadows: [{ dy: 3, blur: 4, alpha: 0.18 }], m: 24 })}<div style="position:absolute;inset:0;padding:${n2(padY)}px ${n2(padX)}px;transform:rotate(${n2(rot)}deg);white-space:nowrap">${rows}</div></div>`;
-  const arrow = inkImg([0, 0, W0, H0], inkArrow({ from: tail, to: tip, width: 5.6 * u, color: accent, bow, seed }));
+  const arrow = c.callout?.arrow === false ? '' : inkImg([0, 0, W0, H0], inkArrow({ from: tail, to: tip, width: 5.6 * u, color: accent, bow, seed }));
   return { html: `<div id="chip" style="position:absolute;left:20px;top:20px;width:${n2(W0)}px;height:${n2(H0)}px;font-family:${family}">${arrow}${note}</div>` };
 };
 

@@ -35,7 +35,7 @@ import { fileURLToPath } from 'node:url';
 import { jobsFor, baseCss } from './compositor/plan.js';
 import { listStyles, resolveStyle, colorStrings, serialisable } from './compositor/styles/index.js';
 import { parseColor } from './compositor/color.js';
-import { captionPlacements, modeOf, setStyleHash } from './compositor/layout.js';
+import { calloutKind, captionPlacements, isLegacyCallout, modeOf, setStyleHash } from './compositor/layout.js';
 import { NATURAL_SEC, TRANSITIONS, resolveGap, sceneSpans, totalFrames } from './compositor/timeline.js';
 
 const T0 = Date.now();
@@ -386,7 +386,11 @@ const ensureFont = async (f) => {
 };
 const ensureFonts = async () => {
   const seen = new Map();
-  for (const f of Object.values(style.fonts)) if (f.family) seen.set(fontKey(f), f);
+  // A role only the callout labels use (studio's `hand`) is loaded only when a callout draws a label with it: an extra web
+  // font on the capture page moves Chrome's raster of a CSS gradient by a level, so a video without one keeps its pixels.
+  const labelRole = style.callout?.label?.kind === 'chip' ? null : style.callout?.label?.font;
+  const labelled = spec.scenes.some((sc) => (sc.callouts ?? []).some((c) => c.label && c.box && !isLegacyCallout(calloutKind(style, c))));
+  for (const [role, f] of Object.entries(style.fonts)) if (f.family && (['text', 'display', 'mono'].includes(role) || (role === labelRole && labelled))) seen.set(fontKey(f), f);
   const keys = (await Promise.all([...seen.values()].map(ensureFont))).filter(Boolean);
   return { keys, loads: [...seen.values()].flatMap((f) => f.weights.flatMap((w) => [`${w} 16px "${f.family}"`, ...(f.italic ? [`italic ${w} 16px "${f.family}"`] : [])])) };
 };

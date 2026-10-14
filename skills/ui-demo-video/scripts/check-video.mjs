@@ -22,6 +22,7 @@ import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
   CAMERA_MODES, DEMO_KEYS, KNOWN_TRANSITIONS, SAFE_NAME, SCENE_KEYS, STEP_KEYS, TAKE_KEYS, THEME_KEYS, TOP_KEYS,
+  CALLOUT_KEYS, CALLOUT_STYLES, CALLOUT_SIDES, BRACKET_SIDES,
   fillTiming, gapSec, isNote, resolveSpec, sceneSpans, styleName, takesUsed, STYLE_KEYS,
 } from './spec-lib.mjs';
 import { STYLES, TOKEN_GROUPS, flatten, resolveStyle, styleNames, unknownStyleMessage } from './compositor/styles/index.js';
@@ -246,6 +247,17 @@ function checkSpecInner(spec, { pub = '.', files = true, demo = false } = {}) {
     for (const c of Array.isArray(s.callouts) ? s.callouts : []) {
       if (!isObj(c)) { errors.push(`${at}: a callout is an object like { "mark": "toast" }`); continue; }
       const name = c.mark ? ` "${c.mark}"` : '';
+      unknown(c, CALLOUT_KEYS, `${at}: callout${name}`, out, 'warnings');
+      if (c.style !== undefined && !CALLOUT_STYLES.includes(c.style)) errors.push(`${at}: callout${name} style "${c.style}" is not one of ${CALLOUT_STYLES.join(', ')}`);
+      if (c.brackets !== undefined) {
+        const sides = Array.isArray(c.brackets) ? c.brackets : [c.brackets];
+        if (!sides.length || sides.some((b) => !BRACKET_SIDES.includes(b))) errors.push(`${at}: callout${name} brackets must be one or more of ${BRACKET_SIDES.join(', ')}`);
+        if ((c.style ?? 'circle') !== 'bracket') warnings.push(`${at}: callout${name} has brackets but its style is "${c.style ?? 'circle'}" (brackets only shape "style": "bracket")`);
+      }
+      if (c.arrow !== undefined && typeof c.arrow !== 'boolean') errors.push(`${at}: callout${name} arrow must be true or false`);
+      if (c.side !== undefined && !CALLOUT_SIDES.includes(c.side)) errors.push(`${at}: callout${name} side "${c.side}" is not one of ${CALLOUT_SIDES.join(', ')}`);
+      if (c.label !== undefined && typeof c.label !== 'string') errors.push(`${at}: callout${name} label must be text`);
+      if ((c.arrow !== undefined || c.side !== undefined) && !c.label) warnings.push(`${at}: callout${name} has ${c.arrow !== undefined ? 'arrow' : 'side'} but no label (they place the label)`);
       // A mark is placed and timed by auto-camera, so before it has run only
       // a callout with neither a mark nor a box is wrong.
       if (!c.mark && !c.box) errors.push(`${at}: callout has no mark and no box`);

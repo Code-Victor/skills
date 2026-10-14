@@ -103,7 +103,9 @@ card for the issue, a check list at the end. Titles blur in; a long title
 wraps inside 80% of the width in balanced lines, never splitting a word, and
 pushes its subtitle down (`word-push` keeps one line). A zoom grows the
 window until the recording fills the frame, gliding on an ease curve. The
-default transition is `zoom-blur` (0.5 s).
+default transition is `zoom-blur` (0.5 s). Callouts are drawn by hand in the
+accent and labelled in handwriting (Caveat) on a small white plate, with an
+arrow to the mark.
 
 Colours: `theme.background`, `foreground`, `accent` and `tagColors` all
 apply. Defaults are a blue accent, red for `Before` and blue for `After`.
@@ -124,8 +126,11 @@ a small mono tag (`After` is a filled chip, other tags are outlined). Titles
 are large, tight Geist type that resolves out of blur, with a quiet mono
 subtitle. The issue card is dark glass; the end list is hairline rows with
 ring ticks. The camera arrives without overshoot and blurs slightly as it
-moves. Callouts are a thicker ring with a stronger dim, labelled on a chip
-filled with the accent, so a frame carries one accent.
+moves. Callouts are drawn by hand in the pale accent with a thin dark edge
+under the line, so it holds on a white page too, and labelled in handwriting
+on the caption's dark glass. `ring` and `spotlight` are a thicker ring with a
+stronger dim, labelled on a chip filled with the accent, so a frame carries
+one accent.
 
 Colours: one pale-blue accent. A `theme.accent` is pulled partway toward it
 and lifted until it reads. A tag called `After` takes the accent; every other
@@ -163,7 +168,10 @@ italics on the left, a folio such as `03 / 06` on the right, over a hairline.
   status in the margin column.
 - **List.** Numbered `01`, `02`, hairline rows; a subtitle becomes a margin
   note.
-- **Callouts.** A plain ink ring with no fill and a paper label with an ink edge.
+- **Callouts.** The editor's vermilion pencil, a finer line, and a margin note
+  in the serif's italic on a slip of the page's paper with a hairline edge, like
+  a proofreader's mark. `ring` is a plain ink ring with no fill and a paper label
+  with an ink edge.
 - **Emphasis.** `*word*` is italic, in the accent in titles and captions and in
   ink in cards and lists. Straight quotes become typographer's quotes.
 
@@ -204,8 +212,11 @@ blur; the recording and the camera stay smooth.
   muted summary such as `# 3 changes`, where the caret stays.
 - **Split** gives each window the same slim bar as a clip, with its own tag in
   it (`before`, `after`), and the caption under the pair.
-- **Callouts** are four corner brackets that draw out in three steps, with a
-  green-edged label, instead of a ring.
+- **Callouts** are drawn in the green accent with a dark edge under the line,
+  stepped with everything else, and labelled with a typed mono comment
+  (`# Export started`) on a dark panel. `"style": "bracket"` keeps the four
+  corner brackets that draw out in three steps (`ring` too, with its
+  green-edged label).
 
 Colours: one soft green accent, always. `theme.accent` is ignored. Tags follow
 a fixed rule whatever colours you give: `Before` red, `After` the green accent,
@@ -248,8 +259,10 @@ gives the same video every time.
   three strokes.
 - **Split** shows two level prints taped to the board, each tag written in
   the strip under its print.
-- **Callouts** are a scribbled circle drawn on in ten poses, with a paper label
-  and a long arrow aimed at it.
+- **Callouts** are drawn with the pencil in ten poses: a scribbled circle by
+  default, and a box, underline, highlighter, bracket, strike or cross in the
+  same hand when the callout asks, with a paper label and a long arrow aimed
+  at it.
 
 Colours: the accent is the pencil. Circles, arrows, underlines and emphasis
 are drawn in `theme.accent`, pulled a little toward ink and deepened until it
@@ -384,7 +397,8 @@ render in a style therefore needs the network once.
 
 ## Limits
 
-- The Remotion renderer ignores `style` and draws the studio look.
+- The Remotion renderer ignores `style` and draws the studio look, with a
+  ring for every hand-drawn callout.
 - `frame: "stage"` still falls back to a flat window, with a warning, in every
   style.
 - A style does not change what is recorded, the scene types or where the

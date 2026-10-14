@@ -63,7 +63,7 @@ Make the still with `node scripts/capture.mjs shot --url <u> --out
 | `autoCamera` | `true` or options: let `scripts/auto-camera.mjs` write `moves` from the take's events file |
 | `moves` | Camera keyframes `{ atSec, x, y, zoom }` (x, y = focus as fractions of the recording) |
 | `camera` | `"fill"` (a zoom grows the whole window until the recording fills the frame) or `"inside"` (the zoom crops inside a fixed window). Default: the spec's top-level `camera`, else the style's (`studio` and `midnight` fill). Clip and image scenes; no effect on `frame: "full"` |
-| `callouts` | `[{ "mark" or "atSec" + "box", "label"?, "style"? }]`: a ring (or `"style": "spotlight"`, which also dims the rest) that rides with the camera |
+| `callouts` | `[{ "mark" or "atSec" + "box", "label"?, "style"?, "brackets"?, "arrow"?, "side"? }]`: a hand-drawn mark (a circle unless `style` names another) drawn on in the style's ink, with the label on an arrow; it rides with the camera (see Callouts) |
 | `playbackRate` | Play faster: `1.2` covers 1.2 s of recording per second of video. Good for typing and loading; say so if time matters. Clip scenes only |
 | `trimStartSec` | Skip the start of the recording |
 | `frame` | `flat` (default), `full` (edge to edge, no window, no logo) or `stage` (tilted 3D; hero moments only, and the one look only the Remotion renderer draws: the default renderer draws it as `flat` and warns) |
@@ -174,8 +174,37 @@ own that you can name only under that style (`page-slide` in `editorial`,
 ## Callouts
 
 Use one when the thing the caption names is small (a toast, a checkbox, a
-note): a ring around it for 2 to 3 s. No more than one on screen at a time;
-labels under 60 characters.
+note): a mark drawn round it by hand for 2 to 3 s. No more than one on screen
+at a time; labels under 40 characters (two or three words read best).
+
+Pick the mark by what you are pointing at (`"style"`):
+
+| `style` | Use it for |
+|---|---|
+| `circle` (default) | The thing that changed: a toast, a button, a new badge |
+| `underline` | A word or a number in text |
+| `highlight` | A line of text, like a marker (multiplied, so the text stays dark; best on a light UI, use `underline` on a dark one) |
+| `box` | A region: a card, a panel, a form |
+| `bracket` | A group of rows or items; `"brackets": ["left", "right"]` (the default) or any of `left`, `right`, `top`, `bottom` |
+| `strike` | Something removed or replaced, in text |
+| `cross` | Something removed: a button, a step, a field |
+| `ring`, `spotlight` | The older highlight: a soft ring, or a ring that also dims the rest (they draw exactly as before) |
+
+The mark draws itself on like a pen (about 0.8 s: each stroke in turn, the
+way Rough Notation does it), then an arrow from the label, then the label;
+all of it fades out in 0.2 s. A label sits where it has room for the whole
+time the callout shows (above, below, right, left in that order, never over
+the mark, never off the picture); `"side": "below"` chooses for you, and
+`"arrow": false` keeps the label without the arrow. The mark follows the
+recording through zooms and pans with its line the same width on screen, and
+the label keeps its size. Each style has its own ink and label (see
+`styles.md`): a blue pen and a handwritten note in `studio`, a pale pen with a
+dark edge on dark glass in `midnight`, a vermilion pencil and an italic margin
+note in `editorial`, a green pen and a typed `# comment` in `terminal` (and its
+corner brackets for `bracket`), a red pencil and a paper note in `sketch`.
+
+The marks are Rough Notation's (MIT, Preet Shihn, on rough.js), ported to
+paint in the renderer, so the same video renders the same pixels every time.
 
 - **From a mark** (preferred): mark it in the steps
   (`{ "mark": "toast", "target": {...} }`) and name it:
@@ -183,8 +212,7 @@ labels under 60 characters.
   sets `box`, `atSec` and `forSec` on every run: it appears at the mark
   (`delaySec` later, if given) and stays up to `maxSec` (2.5), but ends just
   after the next click, which usually changes what it circles. A mark also
-  draws the camera. The mark itself is the style's: a ring in `studio`, `midnight`
-  and `editorial`, corner brackets in `terminal`, a scribbled circle in `sketch`.
+  draws the camera.
   For something the camera shouldn't move to (a toast while the shot stays
   wide), mark it with `"look": false`.
 - **By hand**: `{ "atSec": 14.3, "forSec": 2.1, "box": [x, y, w, h] }`, box
