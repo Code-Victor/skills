@@ -201,15 +201,20 @@ The ticks are on the **output frame count** (every multiple of `step` frames), n
 ### camera
 `mode`: `fill` | `inside`. **Not inherited through `extends`**: a style that does not say `fill` frames inside. `fill` (studio, midnight):
 on flat clip and image scenes the zoom moves the whole window group (shell, shadow, recording, ring, callouts, but not the captions)
-through `fillTransform` (motion.js), screen = T + z p: it grows about the canvas centre while the focus slides toward the centre in
-step with `fill` (0 at rest, 1 once the recording covers the canvas), then each axis is clamped (no background on a side the
-recording covers, inside the canvas on a side it does not). The corners square off as the first side reaches the edge and the ring
-fades with them; tilt and jitter fade as it fills; the logo is gone by fill 0.35. A caption with no plate gets a screen-space scrim
+through `fillPose` (motion.js), a plain camera on the composition at rest: each key is solved once into a view of the canvas
+(centre c, zoom z: inside the recording along an axis where the view is smaller than it, the recording centred where it is larger;
+zoom 1 is the identity), c and z are interpolated on the same eased parameter as inside mode, and screen = (p - c) z + the canvas
+centre. A view edge is convex in that parameter, so the view stays inside the bounds both keys keep with no clamp per frame, and a
+zoom never wobbles. `fill` (0 at rest, 1 once the recording covers the frame) and the corner rounding come from the recording's
+rectangle on screen. The corners square off as the nearest side reaches the frame's edge and the ring fades with them; tilt and
+jitter fade as it fills; the logo is gone by fill 0.35. A caption with no plate gets a screen-space scrim
 (`caption.scrim`, else black or white against the text) once fill passes about 0.5. `inside`: the zoom crops inside a fixed window
 (the original behaviour). A spec overrides it with `"camera"` at the top or on a clip or image scene. Captions that can sit over the
 recording (fill, `frame: "full"`, `placement: "overlay"`) are placed once per caption in Node (`captionPlacements`, layout.js): at the
 top when the bottom spot would be on or within 6% of the action for more than 0.2 s.
-`ease`: `{ type: 'bezier', curve: [0.65,0,0.35,1] }` (today) or `{ type: 'spring', stiffness: 320, damping: 40, mass: 0.92 }` (overdamped: no overshoot; the spring's step response is stretched so it has settled when the keyframe's `atSec` arrives). `motionBlur`: `{ shutter: 0.5, samples: 6 }` averages camera poses between a moment ago and now (only while the camera moves; the cost is the window pass times `samples`).
+In both modes a pan between two zoomed-in keys whose focus points are more than a view apart follows van Wijk & Nuij's smooth
+pan-zoom path (`farPath` in motion.js, rho 1.4, never wider than the whole frame): it pulls out on the way and back in on the one
+eased parameter. `ease`: `{ type: 'bezier', curve: [0.65,0,0.35,1] }` (today) or `{ type: 'spring', stiffness: 320, damping: 40, mass: 0.92 }` (overdamped: no overshoot; the spring's step response is stretched so it has settled when the keyframe's `atSec` arrives). `motionBlur`: `{ shutter: 0.5, samples: 6 }` averages camera poses between a moment ago and now (only while the camera moves; the cost is the window pass times `samples`).
 
 ### transition
 `default` (`zoom-blur`), `sec` (0.45, used for zoom-blur and fade; the others have natural lengths), `stepped` (all transitions on the quantised clock), `params`: `zoomBlur { scaleIn 0.9, scaleOut 1.12, sigma 16 }`, `focusPull { bright 1.3, brightIn 1.25, sigma 16, scaleOut 1.05, scaleIn 0.97 }`,

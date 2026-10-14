@@ -41,7 +41,7 @@ every part in it:
         { "type": "jordan.lee+demo@example.com", "cps": 22 },
         { "click": { "text": "Send invite" }, "dur": 0.7 },
         { "waitFor": { "selector": "[data-sonner-toast]" } },
-        { "mark": "sent-toast", "target": { "selector": "[data-sonner-toast]" }, "look": false },
+        { "mark": "sent-toast", "target": { "selector": "[data-sonner-toast]" } },
         { "wait": 1.8 },
         { "move": { "x": 900, "y": 640 }, "dur": 0.8 }
       ]
@@ -307,7 +307,7 @@ Each run prints one line per stage with its seconds.
 | `rehearse` | Dry-runs the takes to record | A target is not found, not visible, or does not stop moving; a `waitFor` times out; an invalid selector; the page does not load; a sign-in page (exit 3); `setup` exits non-zero; over 2 minutes; an `eval` step with `"fatal": true` throws |
 | `record` | Records the takes, one at a time unless `--parallel` says otherwise. A failed take stops later takes from starting; takes already finished are kept | The same as `rehearse`, plus an empty take (the tab never painted), a take far past its length (stuck step), a crashed page, or over the time limit (`duration` x 25 + 120 seconds, at least 5 minutes) |
 | `camera` | Writes `build/video.json`, then runs `auto-camera.mjs` on it | A take used by a scene has no clip; `autoCamera` on a scene whose clip has no events file; a callout names a mark the events file does not have |
-| `check` | `check-video.mjs` against the real files | A trim runs past the end of a clip; `aspect` does not match the clip; a file is missing; a callout has no box; a camera key outside its scene |
+| `check` | `check-video.mjs` against the real files (it also warns when a callout shows for over 0.3 s where the camera is not looking) | A trim runs past the end of a clip; `aspect` does not match the clip; a file is missing; a callout has no box; a camera key outside its scene |
 | `render` | `compose.mjs`: the whole video on the GPU, then the contact sheet | A file cannot be found or decoded even through a proxy; an unknown scene type or transition; no master was written |
 | `deliver` | `deliver.mjs`: PR copy, captions, chapters, poster, GIF, frozen and black scan | ffmpeg fails. A frozen or black stretch, or a PR copy over the cap, is a warning, not a failure |
 

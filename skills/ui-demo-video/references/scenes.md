@@ -99,11 +99,23 @@ alternative, a little gentler for dense product UI):
   about 40% of the view, never tighter than 2x. Pushes under 1.3x are dropped
   (a wobble), as are shots that can't hold for 1 s (a twitch), and actions in
   the scene's last second.
+- **Cause, then effect.** A mark right after a click or typing is its result
+  (a toast, a saved row). The camera stays on the action for 0.6 s (its own
+  feedback), then moves to the result and holds it while its callout shows
+  (or for the usual 2 s). When the two fit one view, it frames both instead.
+  A callout's mark is always a target, whatever its `look`, so a callout is
+  never drawn where the camera isn't looking; the callout starts as the
+  camera lands.
+- **Far pans.** A pan between two zoomed-in spots more than a view apart
+  takes about 0.7 s and flies on van Wijk and Nuij's smooth pan-zoom path: it
+  pulls out a little on the way and back in, with no stop in the middle, so
+  the target comes into view early. Shorter pans go straight.
 - **Between shots.** Close ones pan straight on; far ones pull out first.
 
 Options per scene: `zoom`, `maxZoom`, `minZoom`, `lead`, `hold`, `gap`,
 `reach`, `pad`, `outSec`, `tail`, `minHold`, `minActions` (2 = never zoom on a
-lone click), `endWide`. Then check the result on the contact sheet
+lone click), `endWide`, `see` (0.6: seconds on an action before moving to its
+result), `farSec` (0.7: length of a far pan). Then check the result on the contact sheet
 (`out/<name>-sheet.png`): if a caption talks about something the camera isn't
 on, mark it in the steps or add a key.
 
@@ -183,10 +195,13 @@ labels under 60 characters.
   sets `box`, `atSec` and `forSec` on every run: it appears at the mark
   (`delaySec` later, if given) and stays up to `maxSec` (2.5), but ends just
   after the next click, which usually changes what it circles. A mark also
-  draws the camera. The mark itself is the style's: a ring in `studio`, `midnight`
+  draws the camera: a mark a callout uses is always framed, and when the
+  camera has to move to it first, the callout starts as the camera lands.
+  The mark itself is the style's: a ring in `studio`, `midnight`
   and `editorial`, corner brackets in `terminal`, a scribbled circle in `sketch`.
-  For something the camera shouldn't move to (a toast while the shot stays
-  wide), mark it with `"look": false`.
+  `"look": false` only matters for a mark no callout uses: it records the
+  place without moving the camera. `check-video.mjs` warns when a callout
+  shows for over 0.3 s mostly off the frame (hand-made boxes and moves).
 - **By hand**: `{ "atSec": 14.3, "forSec": 2.1, "box": [x, y, w, h] }`, box
   as fractions of the recording. Measure it on a frame of the raw clip.
 
