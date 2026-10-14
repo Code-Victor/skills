@@ -321,9 +321,11 @@ in `sketch`. `terminal` types them and `sketch` writes them by hand (faster
 when time is short); the check does not count that time, so leave a little
 extra.
 
-**Callouts**: a ring (or `spotlight`) around something small the caption
-names; name a `mark` and the auto-camera places and times it, ending at the
-next click.
+**Callouts**: a hand-drawn circle (or `underline`, `highlight`, `box`,
+`bracket`, `strike`, `cross`; Rough Notation's marks, in the style's own ink)
+round something small the caption names, drawn on with an arrow from a short
+label; `ring` and `spotlight` remain. Name a `mark` and the auto-camera places
+and times it, ending at the next click.
 
 **Speed**: `playbackRate` 1.1 to 1.25 tightens typing and loading without
 looking fast-forwarded. `trimStartSec` skips the start of a take; two scenes

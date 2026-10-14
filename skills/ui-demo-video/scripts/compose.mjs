@@ -35,7 +35,7 @@ import { fileURLToPath } from 'node:url';
 import { jobsFor, baseCss } from './compositor/plan.js';
 import { listStyles, resolveStyle, colorStrings, serialisable } from './compositor/styles/index.js';
 import { parseColor } from './compositor/color.js';
-import { captionPlacements, modeOf, setStyleHash } from './compositor/layout.js';
+import { calloutKind, captionPlacements, isLegacyCallout, modeOf, setStyleHash } from './compositor/layout.js';
 import { NATURAL_SEC, TRANSITIONS, resolveGap, sceneSpans, totalFrames } from './compositor/timeline.js';
 
 const T0 = Date.now();
@@ -386,7 +386,11 @@ const ensureFont = async (f) => {
 };
 const ensureFonts = async () => {
   const seen = new Map();
-  for (const f of Object.values(style.fonts)) if (f.family) seen.set(fontKey(f), f);
+  // A role only the callout labels use (studio's `hand`) is downloaded and loaded only when a callout draws a label with it,
+  // so a video without one fetches and lays out exactly what it did before.
+  const labelRole = style.callout?.label?.kind === 'chip' ? null : style.callout?.label?.font;
+  const labelled = spec.scenes.some((sc) => (sc.callouts ?? []).some((c) => c.label && c.box && !isLegacyCallout(calloutKind(style, c))));
+  for (const [role, f] of Object.entries(style.fonts)) if (f.family && (['text', 'display', 'mono'].includes(role) || (role === labelRole && labelled))) seen.set(fontKey(f), f);
   const keys = (await Promise.all([...seen.values()].map(ensureFont))).filter(Boolean);
   return { keys, loads: [...seen.values()].flatMap((f) => f.weights.flatMap((w) => [`${w} 16px "${f.family}"`, ...(f.italic ? [`italic ${w} 16px "${f.family}"`] : [])])) };
 };
@@ -556,6 +560,14 @@ const captureJobs = async (jobs) => {
     `body *{visibility:hidden!important}` +
     `${s.show.map((x) => `${x},${x} *`).join(',')}{visibility:visible!important}` +
     (s.hide.length ? `${s.hide.map((x) => `${x}:not(#z),${x}:not(#z) *`).join(',')}{visibility:hidden!important}` : '');
+  // Pictures painted in Node (annotate.js: the hand-drawn marks and arrows, with their draw-time maps) go to the
+  // compositor as they are: Chrome never rasterises them, so they repeat exactly.
+  for (const j of jobs.filter((x) => x.direct)) for (const d of j.direct) {
+    stillFiles.push(d.png);
+    if (flags['dump-stills']) { fs.mkdirSync(flags['dump-stills'], { recursive: true }); const n = `${d.id.replace(/[^A-Za-z0-9._@-]+/g, '_').slice(0, 80)}-${createHash('sha1').update(d.id).digest('hex').slice(0, 6)}`; fs.writeFileSync(path.join(flags['dump-stills'], `${n}.png`), d.png); fs.appendFileSync(path.join(flags['dump-stills'], 'index.txt'), `${n}.png ${d.id}\n`); }
+    stills[d.id] = { file: `/still/${stillFiles.length - 1}.png`, x: 0, y: 0, w: d.w, h: d.h, bx: 0, by: 0, bw: d.w, bh: d.h, ...(d.nearest ? { filter: 'nearest' } : {}) };
+  }
+  jobs = jobs.filter((x) => !x.direct);
   // Several tabs capture in parallel; each takes jobs off the same queue.
   const queue = [...jobs];
   const worker = async () => {

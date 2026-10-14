@@ -74,6 +74,14 @@ node scripts/demo.mjs ~/Downloads/invite-fix-demo/demo.json
 `init` writes a valid starter with two takes and five scenes. Edit it, then
 run the second command, as often as you like.
 
+A callout names a `mark` from the take and a short `label`; it is drawn by
+hand round the marked thing, a circle unless `"style"` names another
+(`underline` or `highlight` for text, `box` for a region, `bracket` for a
+group, `strike` or `cross` for what was removed, or the older `ring` and
+`spotlight`). `"side": "below"` places the label, `"arrow": false` drops the
+arrow, `"brackets": ["left"]` picks a bracket's sides. `scenes.md` has the
+details.
+
 ## Top-level keys
 
 `demo.json` is a `video.json` plus four keys (and `style`, below). Any other key is an error

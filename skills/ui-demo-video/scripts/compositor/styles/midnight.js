@@ -191,7 +191,14 @@ export default {
     quoteBar: 3, shadowPad: 300, rowEnter: 'blur',
   },
   list: { width: 1240, gap: 46, titleSize: 88, subtitleSize: 28, subtitleOpacity: 0.62, itemSize: 44, iconSize: 40, itemEnter: 'blur' },
-  callout: { ringWidth: 3.5, fillAlpha: 0.08, dimAlpha: 0.6, dimColor: '#030409', chip: { size: 24, weight: 600, padY: 8, padX: 16, radius: 999, background: null, color: null } },   // a filled accent chip like the lit After tag: one accent, whatever the spec brings
+  callout: {
+    ringWidth: 3.5, fillAlpha: 0.08, dimAlpha: 0.6, dimColor: '#030409', chip: { size: 24, weight: 600, padY: 8, padX: 16, radius: 999, background: null, color: null },   // a filled accent chip like the lit After tag: one accent, whatever the spec brings
+    // annotations: the pale accent with a thin dark casing under it (it holds 3:1 on a white page too), a handwritten label on the caption's dark glass
+    ink: { width: 4.2, casing: 'auto', casingWidth: 1.6, casingDark: '#07080b', casingAlpha: 0.88 },
+    highlight: { lightness: 0.66 },
+    arrow: { width: 3.6 },
+    label: { size: 40, color: null, plate: 'glass', radius: 14, padX: 14, padY: 4 },
+  },
 
   motion: {
     card: { rise: 12, rows: [0.3, 0.55, 0.8], alpha: [1, 0.9, 0.74] },

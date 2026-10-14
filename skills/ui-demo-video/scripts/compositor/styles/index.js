@@ -103,7 +103,7 @@ export const resolveStyle = (spec, flagStyle) => {
     const lift = (c) => ensureContrast(c, plate, s.caption.tagContrast, s.rgb ?? {});
     s.captionTags = { colors: Object.fromEntries(Object.entries(s.palette.tagColors ?? {}).map(([k, v]) => [k, lift(v)])), fallback: lift(s.palette.tagFallback), accent: lift(s.palette.accent) };   // accent: an *emphasised* word in a caption
   }
-  if (s.post.dither > 0 || s.post.grain > 0 || s.post.vignette > 0 || s.caption.variant === 'glass') s.needsMain = true;
+  if (s.post.dither > 0 || s.post.grain > 0 || s.post.vignette > 0 || s.caption.variant === 'glass' || s.callout?.label?.plate === 'glass') s.needsMain = true;
   s.name = preset;
   s.builders = Object.keys(s.build ?? {});
   s.hash = crypto.createHash('sha1').update(JSON.stringify(s, fnKey)).digest('hex').slice(0, 8);
@@ -130,6 +130,8 @@ export const colorStrings = (s) => {
   for (const c of s.canvas.background.colors ?? []) add(c);
   add(s.canvas.background.tint);
   for (const c of s.caption.color ? [s.caption.color] : []) add(c);
+  const K = s.callout ?? {};   // the annotations' pen, band and label (annotate.js reads them in Node)
+  [K.ink?.color, K.highlight?.color, K.label?.color, K.label?.prefixColor, K.label?.plate?.background].forEach(add);
   return [...out];
 };
 

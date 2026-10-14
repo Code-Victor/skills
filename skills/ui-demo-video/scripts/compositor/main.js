@@ -34,7 +34,7 @@ async function run() {
   await Promise.all(Object.entries(m.stills).map(async ([id, s]) => {
     const blob = await (await fetch(s.file)).blob();
     const bmp = await createImageBitmap(blob, { premultiplyAlpha: 'premultiply', colorSpaceConversion: 'none' });
-    stills.set(id, { ...s, tex: gl.still(bmp) });
+    stills.set(id, { ...s, tex: gl.still(bmp, s.filter) });
     bmp.close();
   }));
   const images = new Map();

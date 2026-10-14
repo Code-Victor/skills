@@ -14,6 +14,8 @@
 //   post     the final pass: vignette, film grain, dither.
 //   trans    a style's own transition (GLSL function of the two scene layers).
 //   solid    a flat colour rectangle (type-on carets).
+//   ink      a hand-drawn stroke picture (annotate.js) that draws itself on: a texel shows once the draw has
+//            reached its time (a second, nearest-sampled picture holds it); optionally multiplied (a highlighter).
 // Everything is premultiplied alpha, blended with ONE, ONE_MINUS_SRC_ALPHA.
 // Positions are in output pixels with the origin at the top left. Draws can be
 // put through one 2D affine (`setXf`): the window group's drift and tilt.
@@ -172,6 +174,18 @@ precision highp float;
 uniform vec4 uColor; in vec2 vPx; out vec4 o;
 void main(){ o = uColor; }`;
 
+// The draw time of a texel is 16 bits in R (high) and G (low) of an opaque picture sampled nearest, so it is exact.
+const INK = `#version 300 es
+precision highp float;
+uniform sampler2D uTex, uTime; uniform float uOpacity, uProgress;
+in vec2 vC; out vec4 o;
+void main(){
+  vec3 tt = texture(uTime, vC).rgb;
+  float t = (floor(tt.r * 255. + .5) * 256. + floor(tt.g * 255. + .5)) / 65535.;
+  if (uProgress <= 0. || t > uProgress + 1e-6) discard;   // nothing before the pen starts
+  o = texture(uTex, vC) * uOpacity;
+}`;
+
 const POST = `#version 300 es
 precision highp float;
 uniform sampler2D uTex; uniform vec2 uRes; uniform float uFrame, uGrainFrame, uDither, uGrain, uGrainSize, uVig, uVigSoft;
@@ -209,6 +223,7 @@ export class GL {
       glass: this.program(GLASS, ['uA', 'uB', 'uBox', 'uRad', 'uOpacity', 'uHasB', 'uSat', 'uTint']),
       grade: this.program(GRADE, ['uTex', 'uSat', 'uDim', 'uOpacity', 'uTint', 'uUV']),
       solid: this.program(SOLID, ['uColor']),
+      ink: this.program(INK, ['uTex', 'uTime', 'uOpacity', 'uProgress']),
       post: this.program(POST, ['uTex', 'uFrame', 'uGrainFrame', 'uDither', 'uGrain', 'uGrainSize', 'uVig', 'uVigSoft']),
     };
     this.custom = new Map();
@@ -262,9 +277,9 @@ export class GL {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     return { t, w: 0, h: 0 };
   }
-  /** Upload an ImageBitmap (already premultiplied) as a still. */
-  still(bitmap) {
-    const gl = this.gl, tex = this.texture('linear');
+  /** Upload an ImageBitmap (already premultiplied) as a still; `filter` 'nearest' for a data picture (an ink draw-time map). */
+  still(bitmap, filter = 'linear') {
+    const gl = this.gl, tex = this.texture(filter);
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false); gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bitmap);
     tex.w = bitmap.width; tex.h = bitmap.height;
@@ -322,7 +337,21 @@ export class GL {
     gl.uniform1f(P.u.uClipX, o.clipX ?? -1);
     gl.uniform2f(P.u.uClipY, ...(o.clipY ?? [-1e9, 1e9]));
     gl.uniform2f(P.u.uMaskY, ...(o.maskY ?? [-1e9, 1e9]));
-    this.fill();
+    if (o.blend === 'multiply') { gl.blendFuncSeparate(gl.DST_COLOR, gl.ONE_MINUS_SRC_ALPHA, gl.ZERO, gl.ONE); this.fill(); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA); }
+    else this.fill();
+  }
+  /**
+   * A hand-drawn stroke picture `tex` with its draw-time map `time`, at a rectangle: only the texels the draw has reached by
+   * `progress` (0..1) show. `blend: 'multiply'` lays it on like a highlighter (white under it takes its colour, dark text stays dark).
+   */
+  ink(tex, time, r, o = {}) {
+    const gl = this.gl, P = this.progs.ink;
+    this.use(P, r); this.bind(tex, 0); this.bind(time, 1);
+    gl.uniform1i(P.u.uTex, 0); gl.uniform1i(P.u.uTime, 1);
+    gl.uniform1f(P.u.uOpacity, o.opacity ?? 1); gl.uniform1f(P.u.uProgress, o.progress ?? 1);
+    if (o.blend === 'multiply') { gl.blendFuncSeparate(gl.DST_COLOR, gl.ONE_MINUS_SRC_ALPHA, gl.ZERO, gl.ONE); this.fill(); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA); }
+    else this.fill();
+    gl.activeTexture(gl.TEXTURE0);
   }
   solid(r, rgb, a) {
     const P = this.progs.solid;

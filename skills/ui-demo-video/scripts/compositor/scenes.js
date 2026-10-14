@@ -14,7 +14,7 @@
 //            background never pulses.
 
 import { Easing, bezier, cameraAt, cameraTransform, fillPose, interpolate, makeCameraEase, seeded, spring } from './motion.js';
-import { ID, accentOf, cameraModeOf, chipKey, effectOf, emChars, emWords, has, captionPos, markSize, placeOf, radiusOf, sceneLayout, shellTag, splitBoxes, tagColorOf } from './layout.js';
+import { ID, accentOf, cameraModeOf, calloutKind, chipKey, chipSide, effectOf, emChars, emWords, has, captionPos, markScale, markSize, placeOf, radiusOf, sceneLayout, shellTag, splitBoxes, tagColorOf } from './layout.js';
 import { rgb01 } from './color.js';
 import { backgroundParams, backgroundProgram, transitionProgram } from './shaders.js';
 
@@ -466,6 +466,8 @@ export class Scenes {
       if (!c.box || c.atSec === undefined) continue;
       const from = Math.round(c.atSec * fps), to = from + Math.round((c.forSec ?? K.forSec) * fps);
       if (local < from - 1 || local > to + 1) continue;
+      if (c._ann) { this.annotate(c, c._ann, from, to, box, win, cam, k); continue; }   // a hand-drawn annotation (annotate.js)
+      const kind = calloutKind(style, c);
       const enter = spring({ frame: ql - from, fps, config: this.SPRING, durationInFrames: Math.round(K.enterSec * fps) });
       const exit = interpolate(ql, [to - Math.round(K.exitSec * fps), to], [1, 0]);
       const o = enter * exit;
@@ -479,23 +481,92 @@ export class Scenes {
         opacity: o, fillA: spot || hasMark ? 0 : K.fillAlpha, dimA: spot ? K.dimAlpha * o : 0, accent: ring, dim, dash: K.dash ?? 0, pxScale: k,
       }, topR);
       if (hasMark) {
-        const m = markSize(box, c, u, K.pad), id = ID.mark(Math.round(m.w * 2), Math.round(m.h * 2), c.style ?? 'ring');
+        const m = markSize(box, c, u, K.pad), ms = markScale(m, this.W, this.H), id = ID.mark(Math.round(m.w * ms), Math.round(m.h * ms), kind);
         if (this.has(id)) {
           const s = this.still(id), n = s.poses ?? 1, rate = style.motion.poseRate ?? this.clock?.poses ?? 10;
           const pose = Math.min(n - 1, Math.floor(Math.max(0, ql - from) / fps * rate));   // on the overlay clock, like everything else
           const kx = bwid / s.bw, ky = bhgt / s.bh;
           const pid = this.has(`${id}@${pose}`) ? `${id}@${pose}` : id, ps = this.still(pid);
-          gl.quad(ps.tex, { x: left - (ps.bx - ps.x) * kx, y: top - (ps.by - ps.y) * ky, w: ps.w * kx, h: ps.h * ky }, { opacity: o });
+          gl.quad(ps.tex, { x: left - (ps.bx - ps.x) * kx, y: top - (ps.by - ps.y) * ky, w: ps.w * kx, h: ps.h * ky }, { opacity: o, ...(kind === 'highlight' ? { blend: 'multiply' } : {}) });
         }
       }
       if (c.label) {
-        const below = y < 0.18, s = this.still(ID.chip(c.label, accent, chipKey(style, this.index, ci, below ? 'below' : 'above')));
+        const below = chipSide(c) === 'below', s = this.still(ID.chip(c.label, accent, chipKey(style, this.index, ci, below ? 'below' : 'above')));
         const ch = s.bh * q;
         const cy = (below ? top + bhgt + 10 * u * q : top - 10 * u * q - ch) + (1 - enter) * 6 * u * q * (below ? -1 : 1);
         gl.quad(s.tex, { x: left - (s.bx - s.x) * q, y: cy - (s.by - s.y) * q, w: s.w * q, h: s.h * q }, { opacity: o });
       }
       gl.scissor(null);
     }
+  }
+
+  /**
+   * A hand-drawn annotation, planned in Node (annotate.js wrote `A` = c._ann): the mark draws itself on (its texels appear
+   * as the pen reaches them), then the arrow, then the label; all of it fades out together at the end. The mark is drawn
+   * in window space so it follows the camera and the group's tilt, at the zoom level nearest the current zoom (its stroke
+   * keeps its width on screen); the arrow and label are drawn in screen space at their own size, hung from the anchor on
+   * the mark's edge, and moved inside the visible picture if the camera would take them past its edge.
+   */
+  annotate(c, A, from, to, box, win, cam, k) {
+    const { gl, fps, u, style, W, H } = this, T = A.timing, ql = this.ql, t = (ql - from) / fps;
+    if (t < 0) return;
+    const exit = interpolate(ql, [to - Math.round(T.exitSec * fps), to], [1, 0]);
+    if (exit <= 0.001) return;
+    const m = gl.xf, sx = m ? Math.sqrt(Math.abs(m.a * m.d - m.b * m.c)) : 1, z = cam.z, res = A.res;
+    const [x, y, bw, bh] = c.box;
+    const r = { x: box.left + cam.tx + x * box.w * z, y: box.top + cam.ty + y * box.h * z, w: bw * box.w * z, h: bh * box.h * z };
+    const S = z * sx;
+    let lv = A.levels[0], best = Infinity;
+    for (const l of A.levels) { const e = Math.abs(Math.log(S / l.S)); if (e < best) { best = e; lv = l; } }
+    const bounds = this.bounds(win);
+    gl.scissor(bounds);
+    if (A.mark === 'builder') {
+      // the style's own mark (terminal's corner brackets), drawn the way the older path draws it
+      const K = style.callout, pad = K.pad * u / k, mk = markSize(box, c, u, K.pad), ms = markScale(mk, W, H), id = ID.mark(Math.round(mk.w * ms), Math.round(mk.h * ms), A.kind);
+      if (this.has(id)) {
+        const s0 = this.still(id), n = s0.poses ?? 1, rate = style.motion.poseRate ?? this.clock?.poses ?? 10;
+        const pose = Math.min(n - 1, Math.floor(Math.max(0, ql - from) / fps * rate)), pid = this.has(`${id}@${pose}`) ? `${id}@${pose}` : id, ps = this.still(pid);
+        const kx = (r.w + pad * 2) / s0.bw, ky = (r.h + pad * 2) / s0.bh;
+        gl.quad(ps.tex, { x: r.x - pad - (ps.bx - ps.x) * kx, y: r.y - pad - (ps.by - ps.y) * ky, w: ps.w * kx, h: ps.h * ky }, { opacity: exit });
+      }
+    } else if (lv?.id) {
+      const g = z / (lv.S * res);
+      gl.ink(this.still(lv.id).tex, this.still(`${lv.id}#t`).tex, { x: r.x - lv.ox * g, y: r.y - lv.oy * g, w: lv.w * g, h: lv.h * g }, { opacity: exit, progress: clamp01(t / T.sec), blend: A.blend });
+    }
+    if (A.arrow || A.label) {
+      const a = (lv?.a ?? 0) / sx, side = A.side;
+      const ad = side === 'above' ? [r.x + r.w / 2, r.y - a] : side === 'below' ? [r.x + r.w / 2, r.y + r.h + a] : side === 'left' ? [r.x - a, r.y + r.h / 2] : [r.x + r.w + a, r.y + r.h / 2];
+      let ax = m ? m.a * ad[0] + m.c * ad[1] + m.tx : ad[0], ay = m ? m.b * ad[0] + m.d * ad[1] + m.ty : ad[1];
+      const L = A.label, ls = L ? this.still(L.id) : null;
+      // the label's box, by the edge it hangs from
+      let lx = 0, ly = 0;
+      if (L) {
+        const px = ax + L.P[0], py = ay + L.P[1];
+        lx = L.attach === 'lm' ? px : L.attach === 'rm' ? px - ls.bw : px - ls.bw / 2;
+        ly = L.attach === 'bm' ? py - ls.bh : L.attach === 'tm' ? py : py - ls.bh / 2;
+      }
+      // keep the unit inside what shows of the picture (the plan in Node avoids this; a camera move it could not avoid is caught here)
+      const ar = A.arrow, boxes = [];
+      if (ar) boxes.push({ x0: ax - ar.ax / res, y0: ay - ar.ay / res, x1: ax + (ar.w - ar.ax) / res, y1: ay + (ar.h - ar.ay) / res });
+      if (L) boxes.push({ x0: lx, y0: ly, x1: lx + ls.bw, y1: ly + ls.bh });
+      const mg = 4 * u, vx0 = Math.max(0, bounds.x) + mg, vy0 = Math.max(0, bounds.y) + mg, vx1 = Math.min(W, bounds.x + bounds.w) - mg, vy1 = Math.min(H, bounds.y + bounds.h) - mg;
+      // while the camera has the anchor out of view, arrow and label fade (over 24 px of travel): they would point at nothing
+      const off = Math.max(vx0 - ax, ax - vx1, vy0 - ay, ay - vy1, 0), seen = clamp01(1 - off / (24 * u)), op = exit * seen;
+      const ux0 = Math.min(...boxes.map((b) => b.x0)), uy0 = Math.min(...boxes.map((b) => b.y0)), ux1 = Math.max(...boxes.map((b) => b.x1)), uy1 = Math.max(...boxes.map((b) => b.y1));
+      const sdx = ux0 < vx0 ? vx0 - ux0 : ux1 > vx1 ? Math.max(vx1 - ux1, vx0 - ux0) : 0, sdy = uy0 < vy0 ? vy0 - uy0 : uy1 > vy1 ? Math.max(vy1 - uy1, vy0 - uy0) : 0;
+      ax += sdx; ay += sdy; lx += sdx; ly += sdy;
+      gl.setXf(null);
+      if (ar && op > 0.001) gl.ink(this.still(ar.id).tex, this.still(`${ar.id}#t`).tex, { x: ax - ar.ax / res, y: ay - ar.ay / res, w: ar.w / res, h: ar.h / res }, { opacity: op, progress: clamp01((t - T.arrowAt) / Math.max(1e-3, T.arrowSec)) });
+      const tl = t - T.labelAt;
+      if (L && tl >= 0 && op > 0.001) {
+        const e = Easing.out(Easing.cubic)(clamp01(tl / T.labelSec)), rise = (1 - e) * L.rise * (side === 'below' ? -1 : 1);
+        if (L.glass) this.glass({ x: lx, y: ly + rise, w: ls.bw, h: ls.bh }, { ...style.caption.glass, radius: L.glass.radius }, e * op);
+        if (L.enter === 'type') this.appear(L.id, 'type', tl, { opacity: op }, { dx: lx - ls.bx, dy: ly - ls.by, cps: L.cps, caret: 'none', fade: op });
+        else this.piece(L.id, { opacity: e * op, dx: lx - ls.bx, dy: ly - ls.by + rise, noJit: true });
+      }
+      gl.setXf(m);
+    }
+    gl.scissor(null);
   }
 
   furniture(i) {

@@ -34,6 +34,7 @@ export default {
     text: { family: 'Inter', weights: [500, 600, 700], fallback: "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" },
     display: { family: 'Inter', weights: [500, 600, 700], fallback: '-apple-system, BlinkMacSystemFont, sans-serif' },
     mono: { family: null, weights: [400, 500], fallback: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" },
+    hand: { family: 'Caveat', weights: [600, 700], fallback: "'Segoe Print', 'Bradley Hand', cursive" },   // handwritten callout labels (callout.label.font)
   },
 
   canvas: {
@@ -97,6 +98,33 @@ export default {
   list: { width: 1100, gap: 30, titleSize: 60, subtitleSize: 26, subtitleOpacity: 0.66, itemSize: 32, itemGap: 18, itemEnter: 'slide', iconSize: 30, iconAlpha: 31 / 255, align: 'center', numbered: false },
 
   callout: {
+    // Hand-drawn annotations (Rough Notation's, painted in Node, see annotate.js): what a callout draws when it names no style,
+    // the pen, the draw-on, the arrow and the label. A callout's "style": circle | box | underline | highlight | bracket | strike | cross,
+    // or the two older highlights below (ring, spotlight), which draw exactly as they always have.
+    style: 'circle',
+    builderStyles: [],              // annotations this style's own build.calloutMark draws instead (sketch: all of them; terminal: bracket)
+    ink: {
+      color: null,                  // null: the accent
+      width: 4.5,                   // u: the stroke (Rough Notation's 2 px is for text on a page; a video needs more)
+      padding: 5, iterations: 2,    // Rough Notation's defaults: 5 px around the target, every stroke twice (iterations in sequence)
+      casing: 'auto',               // auto: a thin outline of the opposite luminance when the ink alone is under 3:1 on white or on black (WCAG 1.4.11) | null | { color, alpha, width }
+      casingWidth: 1.5, casingAlpha: 0.9, casingDark: '#0b0d12', casingLight: '#ffffff',
+      alpha: 1,
+    },
+    highlight: { color: null, alpha: null, lightness: 0.7 },   // a marker band laid on by multiplying (text under it keeps its contrast); alpha null: as strong as takes white down to `lightness` (relative luminance)
+    brackets: ['left', 'right'],    // a bracket's sides when the callout gives none
+    draw: { sec: 0.8, arrowSec: 0.28, labelSec: 0.22, exitSec: 0.2 },   // the mark draws on in `sec` (Rough Notation's 800 ms, ease-out per path), then the arrow, then the label; all fade out in exitSec
+    arrow: { width: 3.8, length: 80, gap: 10, head: 15, bow: 0.22 },   // u; gap: from the mark's edge to the arrow's tip; bow: how much the shaft curves (fraction of its length)
+    label: {
+      kind: 'note',                 // note: the label hangs from an arrow drawn to the mark (this system) | chip: the style's calloutChip next to the box
+      font: 'hand', size: 40, weight: 700, italic: false, lineHeight: 1.08, tracking: 0,
+      color: null,                  // null: the ink; lifted until it reads 4.5:1 on the plate
+      prefix: null, prefixColor: null,   // text before the label (terminal's "# ")
+      maxWidth: 0.3, em: 0.42,      // the widest a label may be (fraction of W, it wraps, balanced); em: the font's mean character width, for placing it before Chrome sets it
+      padX: 12, padY: 3, gap: 8, margin: 12, rise: 5,   // u: inside the plate; between the arrow's tail and the label; kept from the picture's edge; the rise it enters with
+      enter: 'fade', cps: 40,       // fade | type (cps characters a second)
+      plate: { background: 'rgba(255,255,255,0.96)', radius: 10, shadow: '0 1px 2px rgba(17,17,20,0.14),0 6px 18px rgba(17,17,20,0.16)', border: null },   // a level box behind the text ('glass': the caption's glass; null: none)
+    },
     mark: 'ring',                   // ring | a style builder (build.calloutMark)
     pad: 8, radius: 10, ringWidth: 2.5, ringColor: null, dash: 0, fillAlpha: 20 / 255, dimAlpha: 0.42, dimColor: '#0a0a0e', scaleIn: 0.96, forSec: 2.5, enterSec: 0.35, exitSec: 0.25,
     chip: { size: 22, weight: 600, padY: 6, padX: 12, radius: 999, background: null, color: null },

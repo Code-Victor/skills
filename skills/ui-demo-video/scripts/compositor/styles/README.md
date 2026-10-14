@@ -88,7 +88,7 @@ Every token below exists in `studio.js` with the default shown.
 `"overrides": { "logo": { "filter": null } }`), `plate`: `{ background, padX, padY, radius, border }` a rounded plate behind it (u). Both together work.
 
 ### fonts
-`text`, `display`, `mono`, each `{ family, weights, italic, opsz, fallback }`. `family` is a Google
+`text`, `display`, `mono`, each `{ family, weights, italic, opsz, fallback }`, and `hand` (Caveat: the callout labels of studio and midnight; only loaded when a video has a labelled annotation). `family` is a Google
 Fonts family (or `null` for the fallback only). `italic: true` also fetches the italic faces
 (use `<i>` or `font-style: italic`); `opsz: 72` (a number, or `'8..72'`) pins the optical size of a family
 that has the axis (Newsreader, Fraunces: 72 is the display cut; a family without the axis fails the
@@ -187,7 +187,29 @@ The two newer entrances capture the wrapped text as ONE piece (`all`): `type` ty
 `list`: `width` 1100, `gap`, `titleSize`, `subtitleSize/Opacity`, `itemSize`, `itemGap`, `iconSize`, `iconAlpha`, `numbered` (mono 01 02 03 instead of check icons), `itemEnter`. With `slide`, items come in from `motion.list.dx` and `motion.list.dy` (u; dy 0 by default, so a row can rise instead of slide).
 
 ### callout
-`mark`: `ring` or your builder (`build.calloutMark`). `pad` 8, `radius` 10, `ringWidth` 2.5, `ringColor` (default accent), `dash` (0 solid; n dashes around), `fillAlpha`, `dimAlpha` 0.42, `dimColor`, `scaleIn` 0.96, `forSec` 2.5, `enterSec`, `exitSec`, `chip { size, weight, padX, padY, radius, background, color }`.
+A callout is a hand-drawn annotation (`annotate.js`: Rough Notation's strokes, MIT, Preet Shihn, on rough.js's generator, ported
+and painted in Node) unless it names `"style": "ring"` or `"spotlight"`, which draw exactly as they always have (the tokens in the
+last paragraph). The annotation tokens:
+
+| token | default | meaning |
+|---|---|---|
+| style | `circle` | what a callout draws when it names no style: `circle`, `box`, `underline`, `highlight`, `bracket`, `strike`, `cross`, `ring`, `spotlight` |
+| builderStyles | `[]` | annotations your `build.calloutMark` draws instead (sketch: all seven; terminal: `bracket`, its corner brackets). The builder gets `ctx.kind` and `ctx.pad` (px of the capture) and returns poses as for a mark |
+| ink | `{ color: null, width: 4.5, padding: 5, iterations: 2, casing: 'auto', casingWidth: 1.5, casingAlpha: 0.9, casingDark: '#0b0d12', casingLight: '#ffffff', alpha: 1 }` | the pen: colour (null: the accent), stroke width (u), Rough Notation's padding and iterations. `casing: 'auto'` puts a thin outline of the opposite luminance under every stroke when the ink alone is under 3:1 on white or on black (WCAG 1.4.11); `null` none; `{ color, alpha, width }` your own |
+| highlight | `{ color: null, alpha: null, lightness: 0.7 }` | the marker band, laid on by multiplying (dark text under it stays dark). `alpha` null: as strong as takes white down to `lightness` (relative luminance) |
+| brackets | `['left', 'right']` | a bracket's sides when the callout gives none |
+| draw | `{ sec: 0.8, arrowSec: 0.28, labelSec: 0.22, exitSec: 0.2 }` | the mark draws on in `sec` (every stroke in turn, each its share by length, each easing out), the arrow starts as it ends, then the label; all fade out in `exitSec`. On a quantised clock the draw steps with it |
+| arrow | `{ width: 3.8, length: 80, gap: 10, head: 15, bow: 0.22 }` | u: the arrow from the label to the mark's edge (`gap` short of it), its head, how much it curves |
+| label | `{ kind: 'note', font: 'hand', size: 40, weight: 700, italic: false, lineHeight: 1.08, tracking: 0, color: null, prefix: null, prefixColor: null, maxWidth: 0.3, em: 0.42, padX: 12, padY: 3, gap: 8, margin: 12, rise: 5, enter: 'fade', cps: 40, plate: {...} }` | `kind: 'chip'` uses your `calloutChip` builder instead (sketch's note with its own arrow). `font` is a fonts role (studio adds `hand`: Caveat; it is downloaded only for a video with a labelled annotation). `color` null: the ink, lifted until it reads 4.5:1 on the plate. `prefix`: text before the label (terminal's `# `). `em`: the font's mean character width, to place the label before Chrome sets it. `enter`: `fade` or `type`. `plate`: `{ background, radius, shadow, border, borderWidth }` (a level box), `'glass'` (the caption's glass, needs nothing else) or null |
+
+How it is drawn: every stroke is painted in Node into a colour picture and a draw-time picture (for every texel, the moment the
+pen reaches it); compose.mjs hands both to the compositor without Chrome rasterising them, and the shader shows the texels the
+draw has reached, so one picture draws itself on at any frame rate and repeats exactly. The mark is painted once per zoom level
+the callout meets (8 % apart), so its line keeps its width on screen while the camera zooms; the arrow and label keep their size.
+The label goes on the side (above, below, right, left) that keeps it and the arrow inside the picture and off the mark for most
+of the time the target shows (`side` on the callout chooses); the page fades them while the camera has the target out of view.
+
+The older ring and spotlight: `mark`: `ring` or your builder (`build.calloutMark`). `pad` 8, `radius` 10, `ringWidth` 2.5, `ringColor` (default accent), `dash` (0 solid; n dashes around), `fillAlpha`, `dimAlpha` 0.42, `dimColor`, `scaleIn` 0.96, `forSec` 2.5, `enterSec`, `exitSec`, `chip { size, weight, padX, padY, radius, background, color }`. A builder mark is captured at 2x, or less when 2x would not fit the capture page.
 
 ### motion
 `spring` `{ damping: 200 }` for every enter. `card { rise, rows, alpha }`, `list { headRise, start, step, dx, dy }`, `split { stagger, rise }`,
@@ -232,7 +254,7 @@ A style can replace the HTML of any piece with `build: { title, issue, list, cap
 - caption: one element `id="pill"`; `ctx.pos` has the positioned wrapper (`ctx.pos.css`) to put it in, and `tag, text, color, size`. Elements with `data-type` are what the `type` entrance reveals (glyph edges are measured from them).
 - calloutChip: `id="chip"` (label in `ctx.label`). The context also has `callout` (the whole callout), `scene`, `index`, `calloutIndex` and `side` (`'above'` or `'below'`: where the engine puts the label, below when the box is near the top of the recording). A style with its own chip builder gets one picture per callout and side.
 - window: HTML placed inside the shell box (`ctx.box` outer, `ctx.view` the recording's rectangle, `ctx.insets`, `ctx.label` the tag or take name, `ctx.radius`). Set `window.insets` to say where the recording sits; a caption with `placement: 'slot'` goes in the bottom inset strip.
-- calloutMark: HTML for a callout given its size at 2x (`ctx.w`, `ctx.h`, `ctx.callout`): it is captured at 2x so it stays sharp when the camera zooms and follows the camera like the ring. Return `poses`, an array of inner-HTML strings, to get a pose sequence.
+- calloutMark: HTML for a callout given its size at 2x (`ctx.w`, `ctx.h`, `ctx.callout`, `ctx.kind` the annotation, `ctx.pad` the box's padding in capture px, `ctx.scale` 2 or less for a very large box): it is captured at that scale so it stays sharp when the camera zooms and follows the camera like the ring. Return `poses`, an array of inner-HTML strings, to get a pose sequence. It draws ring and spotlight, and the annotations listed in `callout.builderStyles`.
 - furniture: HTML drawn on the background, outside the window, on **every** scene type (title, issue, list, split, clip, image: a running header, a folio). `ctx.scene`, `ctx.index` and `ctx.sceneType` (`'title' | 'issue' | 'list' | 'split' | 'clip' | 'image'`) are given; return `null` for the scenes that should have none. (Furniture used to be offered on clip, image and split scenes only, and drawn on clip and image only: a builder written then should return `null` for the other types if it bakes its header into card pieces.)
 
 **Poses** (D): any piece (and a callout mark) may return `poses: { name: [html0, html1, ...] }` (for the mark: just the array); each is captured once and shown in turn at `motion.poseRate`. Frame k of the callout is pose `floor(seconds * rate)`, clamped.
@@ -289,6 +311,9 @@ draw the anti-aliased edges of SVG paths, SVG masks and filters, and boxes turne
 two differently from one browser launch to the next. Before `sketch` changed, the same piece captured six times
 came out in up to three versions; with `--disable-gpu-rasterization`, in one. Text (glyphs come from a
 CPU-rasterised atlas), level boxes and level tiled backgrounds repeat exactly.
+
+The hand-drawn callouts (`annotate.js`) go one step further: they are painted in Node and compose.mjs hands the PNGs to
+the compositor directly (a capture job with `direct: [{ id, png, w, h, nearest? }]`), so Chrome never rasterises them at all.
 
 So a style that draws by hand (strokes, masks, filters, turned paper) should do what `sketch` does: paint every
 mark, note, sticker and strip of tape in Node into a PNG, with its jitter and grain from a fixed seed, and let

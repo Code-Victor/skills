@@ -70,6 +70,13 @@ export const SCENE_KEYS = {
   list: [...COMMON, 'type', 'title', 'items', 'subtitle'],
 };
 export const TOP_KEYS = ['width', 'height', 'fps', 'theme', 'style', 'camera', 'transition', 'transitionSec', 'transitions', 'scenes', 'music'];
+// A callout on a clip or image scene. "style": a hand-drawn annotation (circle, the default, box, underline, highlight,
+// bracket, strike, cross) or one of the two older highlights (ring, spotlight); "brackets": a bracket's sides;
+// "arrow": false keeps the label without the arrow; "side": where the label goes.
+export const CALLOUT_KEYS = ['atSec', 'forSec', 'box', 'mark', 'delaySec', 'maxSec', 'label', 'style', 'brackets', 'arrow', 'side'];
+export const CALLOUT_STYLES = ['circle', 'box', 'underline', 'highlight', 'bracket', 'strike', 'cross', 'ring', 'spotlight'];
+export const CALLOUT_SIDES = ['above', 'below', 'left', 'right'];
+export const BRACKET_SIDES = ['left', 'right', 'top', 'bottom'];
 // "camera": "fill" (the zoom grows the whole window until the recording fills the frame) or "inside"
 // (the zoom crops inside a fixed window), or { "mode": ... }; on the spec or on a clip or image scene.
 export const CAMERA_MODES = ['fill', 'inside'];
