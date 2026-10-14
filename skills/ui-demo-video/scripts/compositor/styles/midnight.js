@@ -205,7 +205,7 @@ export default {
   },
   camera: {
     mode: 'fill',                                                     // the zoom grows the lit window until the recording fills the frame
-    ease: { type: 'spring', stiffness: 220, damping: 40, mass: 1 },   // overdamped: arrives without overshoot
+    ease: { type: 'bezier', curve: [0.45, 0, 0.2, 1] },   // ease-in-out with a long, calm settle: the overdamped spring it replaced started every move with a jolt (8x studio's frame-to-frame change in speed)
     motionBlur: { shutter: 0.5, samples: 6 },
   },
   transition: {
