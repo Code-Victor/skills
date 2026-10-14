@@ -5,7 +5,7 @@
 // Also here: the names captured pieces are stored under (`ID`), the *emphasis*
 // markup, and a few small helpers.
 
-import { cameraAt, cameraTransform, fillTransform, makeCameraEase } from './motion.js';
+import { cameraAt, cameraTransform, fillPose, makeCameraEase } from './motion.js';
 
 export const has = (v) => v !== undefined && v !== null && String(v) !== '';
 export const esc = (s) => (s === undefined || s === null ? '' : String(s)).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
@@ -143,7 +143,7 @@ export const cameraModeOf = (spec, style, scene) => {
 export const cameraPose = (spec, style, scene, f, fps, ease) => {
   const cam = cameraAt(scene.moves, f, fps, ease);
   if (cameraModeOf(spec, style, scene) !== 'fill') return { cam, xf: null };
-  return { cam, xf: fillTransform(cam, sceneLayout(spec, style, scene).view, spec.width, spec.height) };
+  return { cam, xf: fillPose(scene.moves, f, fps, ease, sceneLayout(spec, style, scene).view, spec.width, spec.height) };
 };
 /** Does a caption bring its own plate (so it stays readable over any recording)? Otherwise fill mode puts a scrim behind it. */
 export const captionHasPlate = (style) => {
