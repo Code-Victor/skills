@@ -192,52 +192,62 @@ export const pickerHtml = ({ title, htmlPath, styles, fps = 60 }) => {
 :root{color-scheme:dark}
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;background:#0f0f11;color:#c9c9cf;font:13px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
-body{display:flex;flex-direction:column}
+body,main{display:flex;flex-direction:column}
+main{flex:1;min-height:0}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 #stage{position:relative;flex:1;min-height:0;background:#000}
 #stage video{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:contain;visibility:hidden;background:#000}
 #stage video.on{visibility:visible}
-#prog{height:6px;background:#26262b;cursor:pointer;flex:none}
-#fill{height:100%;width:0;background:#8d8d96}
-#bar{flex:none;padding:10px 16px 12px;display:flex;flex-direction:column;gap:6px;background:#0f0f11}
+#seek{display:block;width:100%;margin:0;height:18px;accent-color:#c9c9cf;cursor:pointer;flex:none;background:#0f0f11}
+#bar{flex:none;padding:6px 16px 12px;display:flex;flex-direction:column;gap:8px;background:#0f0f11}
+#row{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center}
 #tabs{display:flex;flex-wrap:wrap;gap:4px;align-items:center}
-#tabs button{font:inherit;color:#9a9aa3;background:none;border:1px solid transparent;border-radius:4px;padding:2px 9px;cursor:pointer}
-#tabs button b{font-weight:600;color:#6d6d76;margin-right:6px}
-#tabs button.on{color:#f1f1f4;border-color:#4a4a52;background:#1a1a1e}
-#tabs button.on b{color:#c9c9cf}
-#time{margin-left:auto;font-variant-numeric:tabular-nums;color:#8d8d96}
+button{font:inherit;color:#b4b4bc;background:none;border:1px solid transparent;border-radius:6px;padding:4px 10px;min-height:28px;cursor:pointer}
+button:focus-visible,#seek:focus-visible{outline:2px solid #e6e6ea;outline-offset:2px}
+#tabs button b{font-weight:600;color:#8d8d96;margin-right:6px}
+#tabs button[aria-checked="true"]{color:#f1f1f4;border-color:#5a5a63;background:#1c1c21}
+#tabs button[aria-checked="true"] b{color:#c9c9cf}
+#play{border-color:#3a3a41;color:#e6e6ea;min-width:72px}
+#time{margin-left:auto;font-variant-numeric:tabular-nums;color:#9a9aa3}
 #info{display:flex;flex-wrap:wrap;gap:2px 18px;min-height:19px}
 #info b{color:#f1f1f4;font-weight:600}
-#keys{color:#6d6d76;font-size:12px}
-#keys kbd{font:inherit;color:#9a9aa3}
+#keys{color:#9a9aa3;font-size:12px}
+#keys kbd{font:inherit;color:#c9c9cf}
 #err{color:#e0897a}
 </style></head><body>
+<main>
+<h1 class="sr">${esc(title)}</h1>
 <div id="stage"></div>
-<div id="prog" title="click to seek"><div id="fill"></div></div>
+<input id="seek" type="range" min="0" max="1" step="1" value="0" aria-label="Position in the video">
 <div id="bar">
-  <div id="tabs"><span id="time"></span></div>
-  <div id="info"><b id="iname"></b><span id="idesc"></span><span id="isuits"></span><span id="err"></span></div>
+  <div id="row"><div id="tabs" role="radiogroup" aria-label="Style"></div><button id="play" type="button">Play</button><span id="time"></span></div>
+  <div id="info" aria-live="polite"><b id="iname"></b><span id="idesc"></span><span id="isuits"></span><span id="err"></span></div>
   <div id="keys"><kbd>1</kbd>-<kbd>9</kbd> style &nbsp; <kbd>&larr;</kbd> <kbd>&rarr;</kbd> previous / next style &nbsp; <kbd>space</kbd> play / pause &nbsp; <kbd>,</kbd> <kbd>.</kbd> one frame back / forward &nbsp; <kbd>Home</kbd> start</div>
 </div>
+</main>
 <script>
 (function () {
   var D = ${json};
-  var S = D.styles, FPS = D.fps || 60, cur = 0, vids = [], tabs = [];
+  var S = D.styles, FPS = D.fps || 60, cur = 0, vids = [], tabs = [], scrubbing = false;
   var stage = document.getElementById('stage'), tabsEl = document.getElementById('tabs'), timeEl = document.getElementById('time');
-  var fill = document.getElementById('fill'), prog = document.getElementById('prog'), errEl = document.getElementById('err');
+  var seekEl = document.getElementById('seek'), playEl = document.getElementById('play'), errEl = document.getElementById('err');
 
+  // The styles are a radio group: one Tab stop, arrow keys move between them (and so do 1-9 anywhere on the page).
   S.forEach(function (s, i) {
     var v = document.createElement('video');
     v.src = s.src; v.preload = 'auto'; v.playsInline = true; v.muted = i !== 0; v.controls = false;
+    v.setAttribute('aria-label', s.name + ' render');
     v.addEventListener('error', function () { errEl.textContent = 'cannot load ' + s.src; });
     v.addEventListener('ended', function () { syncOthers(v.currentTime); });
+    v.addEventListener('loadedmetadata', function () { if (i === cur) setRange(); });
     v.addEventListener('click', toggle);
     stage.appendChild(v); vids.push(v);
     var b = document.createElement('button');
-    b.tabIndex = -1; b.innerHTML = '<b>' + (i < 9 ? i + 1 : '') + '</b>';
+    b.type = 'button'; b.setAttribute('role', 'radio');
+    b.innerHTML = '<b aria-hidden="true">' + (i < 9 ? i + 1 : '') + '</b>';
     b.appendChild(document.createTextNode(s.name));
-    b.addEventListener('mousedown', function (e) { e.preventDefault(); });
     b.addEventListener('click', function () { select(i); });
-    tabsEl.insertBefore(b, timeEl); tabs.push(b);
+    tabsEl.appendChild(b); tabs.push(b);
   });
   vids[0].classList.add('on');
 
@@ -248,15 +258,19 @@ body{display:flex;flex-direction:column}
   function syncOthers(t) {
     vids.forEach(function (v, i) { if (i !== cur && Math.abs(v.currentTime - t) > 0.0005) v.currentTime = t; });
   }
+  function setRange() { var d = active().duration; if (d) seekEl.max = String(Math.max(1, Math.round(d * FPS) - 1)); }
   function render() {
     var s = S[cur];
-    tabs.forEach(function (b, i) { b.className = i === cur ? 'on' : ''; });
+    tabs.forEach(function (b, i) { b.setAttribute('aria-checked', i === cur ? 'true' : 'false'); b.tabIndex = i === cur ? 0 : -1; });
     document.getElementById('iname').textContent = s.name;
     document.getElementById('idesc').textContent = s.description;
     document.getElementById('isuits').textContent = s.suits ? 'Suits: ' + s.suits : '';
+    setRange();
   }
-  function select(i) {
-    if (i === cur || i < 0 || i >= S.length) return;
+  function select(i, focus) {
+    if (i < 0 || i >= S.length) return;
+    if (focus) tabs[i].focus();
+    if (i === cur) return;
     var old = vids[cur], nu = vids[i], t = old.currentTime, was = playing();
     old.pause(); old.muted = true; nu.muted = false;
     cur = i; render();
@@ -286,15 +300,18 @@ body{display:flex;flex-direction:column}
     var n = Math.floor(v.currentTime * FPS + 1e-6);
     seek((n + dir + 0.5) / FPS);
   }
-  prog.addEventListener('click', function (e) {
-    var d = active().duration; if (d) seek(d * (e.clientX / prog.clientWidth));
-  });
+  playEl.addEventListener('click', toggle);
+  // The position is a native slider: arrows step a frame, Page Up/Down and Home/End jump, dragging scrubs.
+  seekEl.addEventListener('input', function () { scrubbing = true; if (playing()) active().pause(); seek((+seekEl.value + 0.5) / FPS); });
+  seekEl.addEventListener('change', function () { scrubbing = false; });
   document.addEventListener('keydown', function (e) {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
-    var k = e.key;
-    if (k >= '1' && k <= '9') { select(+k - 1); }
-    else if (k === 'ArrowRight') select((cur + 1) % S.length);
-    else if (k === 'ArrowLeft') select((cur + S.length - 1) % S.length);
+    var k = e.key, onSlider = e.target === seekEl, onRadio = tabs.indexOf(e.target) >= 0;
+    if (onSlider && (k === 'ArrowLeft' || k === 'ArrowRight' || k === 'ArrowUp' || k === 'ArrowDown' || k === 'Home' || k === 'End' || k === 'PageUp' || k === 'PageDown')) return;
+    if (e.target.tagName === 'BUTTON' && !onRadio && (k === ' ' || k === 'Enter')) return;
+    if (k >= '1' && k <= '9') { select(+k - 1, onRadio); }
+    else if (k === 'ArrowRight' || (onRadio && k === 'ArrowDown')) select((cur + 1) % S.length, onRadio);
+    else if (k === 'ArrowLeft' || (onRadio && k === 'ArrowUp')) select((cur + S.length - 1) % S.length, onRadio);
     else if (k === ' ') toggle();
     else if (k === ',') step(-1);
     else if (k === '.') step(1);
@@ -303,10 +320,17 @@ body{display:flex;flex-direction:column}
     e.preventDefault();
   });
   function fmt(t) { var m = Math.floor(t / 60); return m + ':' + (t - m * 60).toFixed(2).padStart(5, '0'); }
+  var last = '';
   function tick() {
-    var v = active(), d = v.duration || 0;
-    timeEl.textContent = fmt(v.currentTime) + ' / ' + fmt(d) + '  frame ' + Math.floor(v.currentTime * FPS + 1e-6) + '  ' + (playing() ? 'playing' : 'paused');
-    fill.style.width = (d ? 100 * v.currentTime / d : 0) + '%';
+    var v = active(), d = v.duration || 0, p = playing();
+    var text = fmt(v.currentTime) + ' / ' + fmt(d) + '  frame ' + Math.floor(v.currentTime * FPS + 1e-6);
+    if (text !== last) {
+      last = text; timeEl.textContent = text;
+      if (!scrubbing) seekEl.value = String(Math.floor(v.currentTime * FPS + 1e-6));
+      seekEl.setAttribute('aria-valuetext', fmt(v.currentTime) + ' of ' + fmt(d));
+    }
+    var label = p ? 'Pause' : 'Play';
+    if (playEl.textContent !== label) playEl.textContent = label;
     requestAnimationFrame(tick);
   }
   render(); tick();
