@@ -102,7 +102,7 @@ same in all of them; only the ground, type, captions, cards and motion change.
 
 | Style | The idea | Good for | Cost |
 | --- | --- | --- | --- |
-| `studio` | Soft light gradient, white window, pill captions | Slack, PRs and docs; the safe default | The least distinctive |
+| `studio` | Soft light gradient, a white window that a zoom grows to fill the frame, pill captions | Slack, PRs and docs; the safe default | The least distinctive |
 | `midnight` | Near-black stage, glass captions, one pale accent | Launches, dark-mode products | A light app is a bright slab on it; slower pacing |
 | `editorial` | Warm paper, serif type, captions as margin notes | Changelogs, weekly updates | The least showy; the recording is smaller |
 | `terminal` | Mono type, typed text, stepped motion | Developer tools, PR demos for engineers | Cold for a consumer product |

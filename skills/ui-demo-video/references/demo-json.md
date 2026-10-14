@@ -88,7 +88,7 @@ with `_` or `$`, or is called `comment` or `notes`, is ignored.
 | `takes` | object | `{}` | Take name to take. Names follow the same character rule as `name`, because they name the clip files |
 | `scenes` | list | required | The scenes. Types and options: `scenes.md` |
 | `style` | string or object | `studio` | The look of the video: `"midnight"`, or `{ "preset": "midnight", "overrides": { "caption": { "size": 0.022 } } }`. See "Style" below and `styles.md` |
-| `camera` | `"fill"` or `"inside"` | the style's | How a zoom frames the recordings: `fill` grows the whole window until the recording fills the frame (`studio`, `midnight`), `inside` crops inside a fixed window (`editorial`, `terminal`, `sketch`). A clip or image scene may set its own. See `styles.md` |
+| `camera` | `"fill"` or `"inside"` (or `{ "mode": ... }`) | the style's | How a zoom frames the recordings: `fill` grows the whole window until the recording fills the frame (`studio`, `midnight`), `inside` crops inside a fixed window (`editorial`, `terminal`, `sketch`). A clip or image scene may set its own. See `styles.md` |
 | `theme`, `transition`, `transitionSec`, `transitions`, `music` | | see below | The same as in a `video.json` |
 | `width`, `height`, `fps` | number | 1920, 1080, 60 | The size and frame rate of the finished video (not of the recording) |
 
@@ -301,7 +301,7 @@ Each run prints one line per stage with its seconds.
 
 | Stage | Does | Fails when |
 |---|---|---|
-| `validate` | Reads `demo.json` and lists every static problem at once, with no browser | The file cannot be read (exit 2) or parsed; an unknown key anywhere; a bad `name` or `url`; a step that does nothing or lacks a target; a scene without its text, items or recording; a scene that uses an undefined take; `transitions` longer than the gaps; an unknown transition; `--retake` or `--takes` naming an unknown take |
+| `validate` | Reads `demo.json` and lists every static problem at once, with no browser | The file cannot be read (exit 2) or parsed; an unknown key anywhere; a bad `name` or `url`; a step that does nothing or lacks a target; a scene without its text, items or recording; a scene that uses an undefined take; `transitions` longer than the gaps; an unknown transition; a `camera` that is not `fill` or `inside`; `--retake` or `--takes` naming an unknown take |
 | `plan` | Decides which takes need recording (below) | Never |
 | `chrome` | Runs `scripts/chrome.sh` so the background browser is up, and takes a `--login` window's session back into it. Skipped when nothing records | `chrome.sh` exits non-zero (no Chrome found, set `CHROME_PATH`) |
 | `rehearse` | Dry-runs the takes to record | A target is not found, not visible, or does not stop moving; a `waitFor` times out; an invalid selector; the page does not load; a sign-in page (exit 3); `setup` exits non-zero; over 2 minutes; an `eval` step with `"fatal": true` throws |
@@ -321,7 +321,8 @@ matter most are in the summary at the end of a good run too:
 - `hideFloating` with toast-like words in the steps and no `keep`
 - a caption that cannot be read in the time it is on screen (more than 17
   characters a second, or under 1.5 s), or longer than 42 characters a line
-  or two lines
+  or two lines. The check does not count the time `terminal` and `sketch`
+  take to type or write a caption, so leave those a little longer
 - a transition that eats more than half of a scene
 - `frame: "stage"` (renders flat; see `remotion-remocn.md`)
 - more than 90 s of video

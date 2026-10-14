@@ -122,24 +122,28 @@ changes it (`styles.md`).
   issue and list cards. Split a longer thought into timed `captions`.
 - Reading speed: 15 to 17 characters a second reads comfortably; 20 is the
   ceiling for adults. `check-video.mjs` warns past 17, past 42 characters a
-  line and past two lines, counting the caption's entrance and exit.
+  line and past two lines (a line break you write starts a new line). It
+  takes 0.6 s off each caption's time on screen for its entrance and exit.
 - Each caption needs at least 1.5 s on screen, however short.
 - Captions stay clear of the action. In `studio` and `midnight` they sit in
   the strip under the window, and over the recording once a zoom has filled
   the frame, on a plate that reads over any page; a caption whose spot would
   cover the action (a callout, where the camera looks, a click) moves to the
-  top of the frame for its whole time on screen. In `terminal` they sit
-  in a band under the frame; in `editorial` they are margin notes in a column
-  beside the recording; in `sketch` they are written into the strip of the
-  photo print. They're burned in because Slack and GitHub play videos muted and
+  top of the frame for its whole time on screen. In `terminal` they sit in a
+  band under the window (on a dark scrim over a `frame: "full"` clip); in
+  `editorial` they are margin notes in a column beside the recording; in
+  `sketch` they are written into the strip of the photo print. They're burned
+  in because Slack and GitHub play videos muted and
   don't show sidecar tracks; `deliver.mjs` also writes `.vtt` and `.srt` for
   anywhere that does.
 - Some styles type the caption instead of fading it in: `terminal` at 50
-  characters a second after a 0.4 s delay, `sketch` at 16 a second after 0.3 s.
+  characters a second after a 0.4 s delay, `sketch` at 16 a second after
+  0.3 s, faster (up to 44) when 16 would not leave about 1.4 s to read.
   A caption is complete after its length divided by that rate plus the delay,
-  so a long caption on a short scene is still being written when the scene
-  ends. `sketch` also shortens a caption that will not fit in two lines with an
-  ellipsis. `check-video.mjs` does not know about typing speed.
+  so a long caption on a short scene may still be appearing when the scene
+  ends. `sketch` also shortens a caption that will not fit in two lines with
+  an ellipsis. `check-video.mjs` does not know about typing speed: its reading
+  check counts from the caption's start, not from its last word.
 - `demo.mjs` lists a caption that is too fast or too short in its summary;
   fix the text or give the scene more time.
 
@@ -161,9 +165,9 @@ The names (`zoom-blur`, `focus-pull`, `push-through`, `whip-pan`, `fade`,
 `cut`) and the per-gap `transitions` list mean the same in every style, but
 what they look like is the style's: `studio` blurs and zooms, `midnight` and
 `editorial` tone them down, and `terminal` and `sketch` redraw them in their own
-language (a caret wipe, a line repaint, a line scroll, a hard slide in
-`terminal`; a nudge of the paper and a cut in `sketch`). Their lengths follow
-the style too, unless you write `sec`. A style may also add a transition of its
+language (a caret wipe, a line repaint, a line scroll, a hard slide and a
+stepped crossfade in `terminal`; a nudge of the paper and a cut in `sketch`).
+Their lengths follow the style too, unless you write `sec`. A style may also add a transition of its
 own that you can name only under that style (`page-slide` in `editorial`,
 `caret-wipe` in `terminal`, `paper-swap` in `sketch`). See `styles.md`.
 

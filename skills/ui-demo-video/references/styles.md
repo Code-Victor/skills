@@ -18,14 +18,15 @@ about it and a line about what it suits (`--json` for data).
 | Style | The idea | Right choice when | Cost |
 |---|---|---|---|
 | `studio` | A soft light gradient, a big white window that a zoom grows until the recording fills the frame, dark pill captions | You are unsure, or the video goes into Slack, a PR or docs. Your own `theme` colours apply | The safe default, so the least distinctive |
-| `midnight` | Depth and light: a near-black stage with a slow pool of cool grey light, glass captions | Launches, dark-mode products, anything that should feel premium | A light app is a bright slab on a dark stage; pacing is slower (0.7 s transitions) |
+| `midnight` | Depth and light: a near-black stage with a slow pool of graphite light, glass captions | Launches, dark-mode products, anything that should feel premium | A light app is a bright slab on a dark stage; pacing is slower (0.7 s transitions) |
 | `editorial` | Type and stillness: warm paper, ink, hairline rules, a serif, margin notes | Changelogs, weekly updates, writing-led explanations | The least showy. The recording is smaller (at most 74% of the width) to leave room for the margin note |
 | `terminal` | A terminal session about the change: mono type, typed text, stepped motion | Developer tools, pull-request demos for engineers | Reads as cold for a consumer product. Typed text needs time to finish |
-| `sketch` | A photo pinned to paper, annotated by hand, moving in held poses | Bug-fix before and afters, where circling the bug by hand says it fastest | Playful, so wrong for a formal audience. Typed captions are slow; very long ones are cut short |
+| `sketch` | A photo pinned to paper, annotated by hand, moving in held poses | Bug-fix before and afters, where circling the bug by hand says it fastest | Playful, so wrong for a formal audience. Captions are written by hand, and one longer than two lines is cut short. The slowest to render |
 
 All five render at about 140 to 190 frames a second on an Apple M2 Pro, so a
-minute of video takes under half a minute. No style records anything
-different: the clips are the same files.
+minute of video takes under half a minute (`sketch` adds a few seconds before
+the first frame). No style records anything different: the clips are the
+same files.
 
 ## How a style treats your colours
 
@@ -37,7 +38,10 @@ different: the clips are the same files.
 - `theme.accent` and `theme.tagColors` still apply, but each style adapts
   them to its ground, so one accent and a few tag colours still hold together.
   The details are per style below.
-- `theme.logo` is used as it is; some styles recolour it (below).
+- `theme.logo` is used as it is, except in `midnight` and `terminal`, which
+  invert it into a light monochrome mark. That suits a dark logo; a white one
+  would turn dark, so for a logo that is already light add
+  `"logo": { "filter": null }` to the overrides (below).
 - A `transition` or `transitionSec` you write is honoured. When you write none,
   the style's own default applies, and its length differs slightly (0.5 s for
   `studio`, `terminal` and `sketch`, 0.6 s for `editorial`, 0.7 s for
@@ -54,7 +58,8 @@ slides toward what the camera looks at, until the recording fills the frame:
 from about 1.2x (16:9) or 1.3x (16:10) no background shows, and the corners
 square off as the window reaches the edge. This is how Cap and Screen Studio
 zoom, and how most launch videos look: full-bleed most of the time, the framed
-wide shot brief. The logo steps aside as the window grows.
+wide shot brief. The logo fades out as the window grows, so it never sits on
+the recording.
 
 `editorial`, `terminal` and `sketch` frame **inside**: the window stays where
 it is and the zoom crops inside it, because the page, the terminal window and
@@ -65,17 +70,18 @@ of the spec; for one clip or image scene, put it on the scene. A
 `frame: "full"` clip, a split and the cards never change.
 
 **Captions over the recording.** Once a zoom fills the frame, the caption sits
-over the recording. Both fill styles give it a plate that holds 4.5:1 or
-better over a white page and a black one, for the text and for the tag colours
-(studio's dark pill at 92%, midnight's dark glass; a tag colour that would
-fall short on the plate is lifted, `caption.tagContrast`). A style forced to
-fill whose captions have no plate gets a soft scrim behind them while the
-recording covers them. Where the caption goes is decided once per caption,
-before the render: if its spot in the strip would sit on or within 6% of the
-action (a callout that is showing, where the camera looks while zoomed in, a
-click or typing in the take) for more than 0.2 s, it sits at the top
-title-safe line instead, for its whole time on screen. The render prints the
-captions it moved.
+over the recording. Both fill styles set captions large (34 px in studio,
+36 px in midnight) on a plate that holds 4.5:1 or better over a white page and
+a black one, for the text and for the tag colours (studio's dark pill at 92%,
+midnight's dark glass; a tag colour that would fall short on the plate is
+lifted, `caption.tagContrast`). A style forced to fill whose captions have no
+plate gets a soft scrim behind them while the recording covers them. Where the
+caption goes is decided once per caption, before the render: if its spot in
+the strip would sit on or within 6% of the action (a callout that is showing,
+where the camera looks while zoomed in, a click or typing in the take) for
+more than 0.2 s, it sits at the top title-safe line instead, for its whole
+time on screen. The same goes for a caption on a `frame: "full"` clip in any
+style. The render prints the captions it moved.
 
 **The earlier studio framing** (the zoom inside an 80% window, 26 px captions,
 tag colours as given) is one override; it renders frame for frame what studio
@@ -92,25 +98,34 @@ drew before fill existed:
 
 What the viewer sees: a pale gradient ground, the recording in a big white
 rounded window with a soft shadow, a dark pill caption in the strip under the
-window, Inter type, a ticket card for the issue, a check list at the end.
-Titles blur in. A zoom grows the window until the recording fills the frame,
-gliding on an ease curve. The default transition is `zoom-blur` (0.5 s).
+window (over the recording once a zoom fills the frame), Inter type, a ticket
+card for the issue, a check list at the end. Titles blur in; a long title
+wraps inside 80% of the width in balanced lines, never splitting a word, and
+pushes its subtitle down (`word-push` keeps one line). A zoom grows the
+window until the recording fills the frame, gliding on an ease curve. The
+default transition is `zoom-blur` (0.5 s).
 
 Colours: `theme.background`, `foreground`, `accent` and `tagColors` all
 apply. Defaults are a blue accent, red for `Before` and blue for `After`.
+Faded text (subtitles, the issue's source and reporter lines) stays at 66%
+opacity or more so it holds 4.5:1, and the issue's status text is darkened
+from the accent until it reads 4.5:1 on its pill.
 
 ## midnight
 
-What the viewer sees: a near-black ground with one slow pool of cool grey
-light behind the window, a little film grain and a soft vignette. The window
-is dark-filled with a gradient hairline and a faint cool glow, and drifts in
+What the viewer sees: a near-black ground with one slow pool of graphite
+light behind the window (a cool grey on the hue of the style's pale-blue
+accent), a little film grain and a soft vignette. The window is dark-filled
+with a gradient hairline and a faint glow in the accent's hue, and drifts in
 about 3% over each scene so no frame is still; a zoom grows it until the
-recording fills the frame, as in `studio`. Captions are dark glass under
-the window with a small mono tag (`After` is a filled chip, other tags are
-outlined). Titles are large, tight Geist type that resolves out of blur, with
-a quiet mono subtitle. The issue card is dark glass; the end list is hairline
-rows with ring ticks. The camera arrives without overshoot and blurs slightly
-as it moves. Callouts are a thicker ring with a stronger dim.
+recording fills the frame, as in `studio`. Captions are dark glass in the
+strip under the window (over the recording once a zoom fills the frame) with
+a small mono tag (`After` is a filled chip, other tags are outlined). Titles
+are large, tight Geist type that resolves out of blur, with a quiet mono
+subtitle. The issue card is dark glass; the end list is hairline rows with
+ring ticks. The camera arrives without overshoot and blurs slightly as it
+moves. Callouts are a thicker ring with a stronger dim, labelled on a chip
+filled with the accent, so a frame carries one accent.
 
 Colours: one pale-blue accent. A `theme.accent` is pulled partway toward it
 and lifted until it reads. A tag called `After` takes the accent; every other
@@ -166,37 +181,48 @@ very little blur.
 What the viewer sees: a near-black zinc ground with a faint static dot grid
 and a vignette, and one monospace family (JetBrains Mono) for everything. The
 window has a slim title bar with three dots and a path such as `~/app before`,
-the tag shown as a lower-case word (red for `Before`, green for `After`). Text
-is **typed**, not faded, and overlays move in steps, 30 poses a second, with no
-easing or blur.
+the tag shown as a lower-case word (red for `Before`, green for `After`).
+Titles, captions and the list's closing line are **typed**; the issue pane,
+its rows, the list heading and the list items fade in over about five steps
+(a sixth of a second). Overlays move in steps, 30 poses a second, with no
+blur; the recording and the camera stay smooth.
 
 - **Captions** start with a green `>` prompt, are left-aligned under the
   window and type at 50 characters a second behind a block caret, after a
-  0.4 s delay. They wrap inside 72% of the width.
+  0.4 s delay. They wrap inside 64% of the width (no wider than a 16:10
+  window) and type line by line; the band under the window has room for two
+  lines. On a `frame: "full"` clip, which has no title bar, the caption
+  starts with the tag word and sits on a dark scrim that rises from the
+  bottom of the recording.
 - **Title** types at 30 characters a second (the whole entrance never takes
-  more than 1.4 s), with the subtitle as a `# comment` line above.
+  more than 1.4 s), with the subtitle as a `# comment` line above. A long
+  title wraps, the caret moving from line to line and resting after the last
+  character.
 - **Issue** is a terminal pane: `> issue show ACME-101` and then key and value
   rows (source, status, title), the quote with a red bar, the reporter.
 - **List** prints one line at a time with green checks, then a prompt types a
-  muted summary such as `# 3 changes`.
-- **Split** gives both windows the same slim bar.
+  muted summary such as `# 3 changes`, where the caret stays.
+- **Split** gives each window the same slim bar as a clip, with its own tag in
+  it (`before`, `after`), and the caption under the pair.
 - **Callouts** are four corner brackets that draw out in three steps, with a
   green-edged label, instead of a ring.
 
 Colours: one soft green accent, always. `theme.accent` is ignored. Tags follow
 a fixed rule whatever colours you give: `Before` red, `After` the green accent,
-everything else muted grey. A logo is turned light and monochrome.
+everything else muted grey. A dark logo is turned light and monochrome (a
+white one would turn dark: see the logo note above).
 
 Transitions are discrete and **named ones are reinterpreted on purpose**: the
 default and `zoom-blur` are a caret wipe (a bar sweeps across and the new scene
 appears behind it, snapping to a column grid), `focus-pull` repaints the frame
-line by line, `push-through` scrolls it a line at a time, `whip-pan` is a hard
-slide with no blur. `fade` is stepped too. All run 0.5 s.
+line by line, `push-through` scrolls it a line at a time, `whip-pan` slides
+both scenes across by whole columns with no blur, and `fade` is a crossfade in
+steps. All run 0.5 s.
 
 Behaves differently: typed text needs time to finish. A caption of 42
 characters is complete after about 0.8 s plus the 0.4 s delay, so give a
 caption scene a little longer than in other styles, and avoid long captions
-on short scenes.
+on short scenes. `check-video.mjs` does not count the typing time.
 
 ## sketch
 
@@ -208,24 +234,30 @@ print shakes by a pixel or two and tilts about a degree, and the same seed
 gives the same video every time.
 
 - **Captions** are written by hand into the strip of the print, with a
-  highlighter slab behind the tag, at 16 characters a second. A caption that
-  does not fit on one line shrinks a little, then wraps to two lines; one
-  longer than that is shortened with an ellipsis. On a full-bleed clip the
-  caption becomes a taped note.
+  highlighter slab behind the tag. The words are written at 16 characters a
+  second, or faster (up to 44) when at 16 they would not finish with about
+  1.4 s left to read. A caption that does not fit on one line shrinks a little, then
+  wraps to two lines that hang clear of the tag; one longer than that is
+  shortened with an ellipsis. On a full-bleed clip the caption becomes a
+  taped note.
 - **Title** is hand-written, then an ink underline draws on and the subtitle
   pops in as a sticker.
-- **Issue** is a note on slightly tilted paper, with the status drawn by hand.
-- **List** is a hand-drawn check list whose ticks are drawn stroke by stroke.
-- **Split** shows the two prints tilted opposite ways, each tag written under
-  its print.
+- **Issue** is a note taped to the board on slightly tilted paper, written
+  line by line, with the status circled by hand.
+- **List** is a hand-drawn check list: each item is written, then ticked in
+  three strokes.
+- **Split** shows two level prints taped to the board, each tag written in
+  the strip under its print.
 - **Callouts** are a scribbled circle drawn on in ten poses, with a paper label
-  and a long arrow that points at it.
+  and a long arrow aimed at it.
 
-Colours: red pencil for marks and a deep olive for ticks. Tags are coloured by
-their **name**, not by the colour you gave: `Before`, `Bug`, `Broken`, `Old`,
-`Problem`, `Issue`, `Wrong` or `Regression` are red; `After`, `Fix`, `Fixed`,
-`New`, `Now`, `Done` or `Result` are olive; anything else is ink. A
-`theme.accent` is lifted until it reads on the note paper.
+Colours: the accent is the pencil. Circles, arrows, underlines and emphasis
+are drawn in `theme.accent`, pulled a little toward ink and deepened until it
+reads 4.5:1 on the board; with no accent the pencil is red. Ticks and the
+issue's status are a deep olive. Tags are coloured by their **name**, not by
+the colour you gave: `Before`, `Bug`, `Broken`, `Old`, `Problem`, `Issue`,
+`Wrong` or `Regression` are red; `After`, `Fix`, `Fixed`, `New`, `Now`, `Done`
+or `Result` are olive; anything else is ink.
 
 Transitions: the default is `paper-swap` (0.5 s): the old scene is nudged and
 turned a fraction of a degree for two poses, hard cuts, and the new one settles
@@ -233,9 +265,11 @@ into place. `zoom-blur`, `focus-pull`, `push-through` and `whip-pan` all
 become variants of it (they differ in how far the paper moves), and `fade` is
 a dissolve in three held steps.
 
-Behaves differently: it is the slowest style to render (14 seconds against 9
-to 11 for the others on the same 18.7 second demo). Keep captions to one
-short sentence.
+Behaves differently: it usually takes the longest to render. Every mark,
+note and sheet of paper is painted before the first frame, which adds a few
+seconds (measured: 2 to 3.5 s more than `studio` on a 20 second demo, 3 to
+6 s on a 36 second one); the frames themselves draw as fast as in any style.
+Keep captions to one short sentence.
 
 ## Choosing a style
 
@@ -268,9 +302,9 @@ node scripts/demo.mjs ~/Downloads/<name>-demo/demo.json --styles midnight,editor
 the camera and the check once, so **nothing is recorded twice** (it works with
 `--only render` on a finished build), then renders the demo once per style,
 one after another. It does no delivery (no PR copy, captions or poster).
-Measured on an 18.7 second demo with three clips: five styles took 54 seconds
-of rendering in all, between 9 and 14 seconds each. Allow roughly one normal
-render per style; the first run also downloads the fonts (below).
+Measured on a 20 second demo with two clips: five styles took 52 to 60
+seconds of rendering in all, between 9 and 15 seconds each. Allow roughly one
+normal render per style; the first run also downloads the fonts (below).
 
 What it writes, in the demo folder:
 
@@ -285,11 +319,16 @@ the same moments in every row |
 
 Look at the sheet first. To compare in motion, open
 `out/<name>-styles.html` in a browser (the run does not open it for you). It
-plays the renders at full size. Number keys `1` to `9` and the left and right
-arrows flip between the styles at the same playback position; space plays and
-pauses, comma and full stop step one frame back and forward, `Home` goes to the
-start and a click on the bar seeks. Because each style has its own transition
-lengths, the same second can be a slightly different moment.
+plays the renders at full size and works from the keyboard. The styles are a
+radio group: Tab to it and use the arrow keys, or press `1` to `9` anywhere
+on the page (left and right arrows also flip when the position slider does
+not have focus); a flip keeps the playback position. The Play button, space
+or a click on the video plays and pauses; comma and full stop step one frame
+back and forward, and `Home` goes to the start. The position is a native
+slider: drag it to scrub, or focus it and the arrow keys step a frame (Page
+Up and Page Down, `Home` and `End` jump). Every control shows a focus ring.
+Because each style has its own transition lengths, the same second can be a
+slightly different moment.
 
 To keep the chosen one, render it for real: run the same command with
 `--style <name>`, or put `"style": "<name>"` in `demo.json` so every later run

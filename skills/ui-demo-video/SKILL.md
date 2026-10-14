@@ -309,8 +309,10 @@ issue and list cards. `captions` gives a long clip several in turn. Where they
 sit depends on the style: in the strip under the window in `studio` and
 `midnight` (over the recording, on a plate, while a zoom fills the frame, and
 at the top for their whole time when the action is under that spot), under the
-frame in `terminal`, in a margin column in `editorial`, in the photo's strip
-in `sketch`. `terminal` and `sketch` type them, so leave a little extra time.
+window in `terminal`, in a margin column in `editorial`, in the photo's strip
+in `sketch`. `terminal` types them and `sketch` writes them by hand (faster
+when time is short); the check does not count that time, so leave a little
+extra.
 
 **Callouts**: a ring (or `spotlight`) around something small the caption
 names; name a `mark` and the auto-camera places and times it, ending at the

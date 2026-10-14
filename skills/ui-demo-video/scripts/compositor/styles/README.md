@@ -84,7 +84,8 @@ Every token below exists in `studio.js` with the default shown.
 ### logo
 `theme.logo` in the spec is the picture; this token is how the style treats it (all `null` = as is).
 `filter`: any CSS filter applied when the logo still is captured (`invert(1)` for a dark logo on a dark ground,
-`brightness(1.4)`), `plate`: `{ background, padX, padY, radius, border }` a rounded plate behind it (u). Both together work.
+`brightness(1.4)`; an inverting filter turns an already light logo dark, which a spec undoes with
+`"overrides": { "logo": { "filter": null } }`), `plate`: `{ background, padX, padY, radius, border }` a rounded plate behind it (u). Both together work.
 
 ### fonts
 `text`, `display`, `mono`, each `{ family, weights, italic, opsz, fallback }`. `family` is a Google
@@ -179,7 +180,8 @@ Variant tokens: `pill { gap, padY, padX, radius, background, shadow, border }`, 
 
 ### title, card, list
 `title`: `enter` (the entrance when a scene has no `effect`: `soft-blur-in` | `word-push` | `micro-scale-fade` | `type` | `lines`; a scene's own `effect` wins, and `type` and `lines` are valid scene effects too), `maxEnterSec` (null: none; a number speeds the whole entrance up until it finishes within that many seconds, whatever the text length), `size` 0.042 W, `weight` 600, `align` `center`|`left` (with `padLeft`), `subtitleSize/Weight/Opacity/Enter`, `gap`, `tracking` per effect, `measure`: `estimate` (today: 0.5 em per character, Inter's guess, used by word-push) or `glyph` (the real captured word widths: use this for any other font).
-The two new entrances wrap the text (`maxWidth` 0.8 W, `lineHeight` 1.12) and capture it as ONE piece (`all`): `type` types it across the lines with `typeCps` (24) and `caret` / `caretColor`;
+`maxWidth` (0.8 W) and `lineHeight` (1.12) are the title's measure: with the default builder every entrance but `word-push` wraps a long title inside it in balanced lines, a word never split, and pushes the subtitle down (a one-line title sits where it always did; `word-push` keeps one line).
+The two newer entrances capture the wrapped text as ONE piece (`all`): `type` types it across the lines with `typeCps` (24) and `caret` / `caretColor`;
 `lines` is the line-by-line mask reveal: each line rises (`lines.rise` line heights, 1) into a mask that is its own band of the screen (`lines.stagger` 0.09 s, `lines.sec` 0.6, `lines.ease`, `lines.fade: false` for a pure mask reveal with no opacity ramp), whatever the wrapping turns out to be.
 `card`: `width` 1040, `padX/padY` 60/52, `radius` 28, `gap` 22, `fill`, `shadow`, `border`, `metaSize/metaOpacity`, `statusSize/statusAlpha`, `titleSize`, `quoteSize`, `reporterSize`, `quoteBar`, `rowEnter`. Card text uses `palette.foreground`: a dark card needs a light foreground, set both.
 `list`: `width` 1100, `gap`, `titleSize`, `subtitleSize/Opacity`, `itemSize`, `itemGap`, `iconSize`, `iconAlpha`, `numbered` (mono 01 02 03 instead of check icons), `itemEnter`. With `slide`, items come in from `motion.list.dx` and `motion.list.dy` (u; dy 0 by default, so a row can rise instead of slide).
@@ -276,13 +278,18 @@ Pieces take a rotation in the engine (`piece(id, { rot })`, radians about their 
 
 ## Determinism
 
-The frames handed to the encoder are identical between runs for every style except those whose builders use SVG
-filters (`feTurbulence`, `feDisplacementMap`, as `sketch` does): Chrome rasterises a filter's output with a few
-pixels that differ by one or two levels from one browser launch to the next (one pixel in one piece, held for a
-whole pose, so a few dozen frames differ by one level in a few pixels). It is the capture, not the GPU draw or the
-hardware encoder, and flags did not remove it (GPU raster off, GPU off, one raster thread, one capture tab, five
-captures per piece and taking the commonest: all still varied). A style that needs bit-identical repeat renders
-should draw its noise in a shader or bake it into a PNG, not in an SVG filter. Measure it with `--hash-frames`.
+The frames handed to the encoder are identical between runs for every built-in style, `sketch` included. What
+can break that is Chrome's GPU raster when a piece is captured (not the WebGL draw or the hardware encoder): it can
+draw the anti-aliased edges of SVG paths, SVG masks and filters, and boxes turned with a CSS rotation a level or
+two differently from one browser launch to the next. Before `sketch` changed, the same piece captured six times
+came out in up to three versions; with `--disable-gpu-rasterization`, in one. Text (glyphs come from a
+CPU-rasterised atlas), level boxes and level tiled backgrounds repeat exactly.
+
+So a style that draws by hand (strokes, masks, filters, turned paper) should do what `sketch` does: paint every
+mark, note, sticker and strip of tape in Node into a PNG, with its jitter and grain from a fixed seed, and let
+Chrome only place the picture, untransformed. `sketch.js` has the small painter it uses (brush ribbons, a scanline
+fill, a seeded grain mask, PNG writing). Noise can also be drawn in a shader. Small level icons (the built-in
+list check marks) have repeated so far, but measure any style with `--hash-frames` (two runs, then `diff`).
 
 ## Testing a style
 
