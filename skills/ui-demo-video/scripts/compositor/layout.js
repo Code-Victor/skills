@@ -5,6 +5,8 @@
 // Also here: the names captured pieces are stored under (`ID`), the *emphasis*
 // markup, and a few small helpers.
 
+import { cameraAt, cameraTransform, fillTransform, makeCameraEase } from './motion.js';
+
 export const has = (v) => v !== undefined && v !== null && String(v) !== '';
 export const esc = (s) => (s === undefined || s === null ? '' : String(s)).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 export const r2 = (v) => Math.round(v * 100) / 100;
@@ -26,6 +28,7 @@ export const ID = {
   mark: (w, h, kind) => `mark|${STYLE_HASH}|${r2(w)}|${r2(h)}|${kind}`,
   logo: (src, h, style) => `logo|${src}|${r2(h)}${logoKey(style)}`,
   scrim: (view, hgt, radius, color) => `scrim|${STYLE_HASH}|${j([view.w, view.left, view.top, hgt].map(r2))}|${r2(radius)}|${color}`,
+  fillScrim: () => `fillscrim|${STYLE_HASH}`,   // fill mode: the screen-space gradient behind a caption with no plate once the recording covers it
   card: (i) => `scene${i}|${STYLE_HASH}|card`,
   piece: (i, name) => `scene${i}|${STYLE_HASH}|${name}`,
 };
@@ -101,7 +104,12 @@ export const bandTop = (spec, style, scene) => {
   if (!l || l.full) return null;
   return l.outer.top + l.outer.h;
 };
-export const tagColorOf = (spec, style, tag) => (tag ? style.palette.tagColors?.[tag] : undefined) ?? style.palette.tagFallback;
+/** A caption tag's colour: the palette's, lifted to the plate's contrast when the style asks (caption.tagContrast; resolveStyle works it out). */
+export const tagColorOf = (spec, style, tag) => {
+  const lifted = style.captionTags;
+  if (lifted) return (tag ? lifted.colors[tag] : undefined) ?? lifted.fallback;
+  return (tag ? style.palette.tagColors?.[tag] : undefined) ?? style.palette.tagFallback;
+};
 export const accentOf = (style) => style.palette.accent;
 /** The title's entrance: the scene's own `effect`, else the style's `title.enter`, else soft-blur-in. */
 export const effectOf = (style, scene) => scene.effect ?? style.title?.enter ?? 'soft-blur-in';
@@ -116,25 +124,154 @@ export const shellTag = (style, scene) => {
 /** The label a shell builder may print: the scene's tag, else the recording's file name. */
 export const sceneLabel = (scene) => scene.tag ?? (scene.src ? String(scene.src).replace(/^.*\//, '').replace(/\.[^.]+$/, '') : '');
 
+// ------------------------------------------------------------ camera mode
+const FILL_BOTTOM = 0.025;   // fill mode: the caption strip ends this far (fraction of H) above the frame's bottom edge
+/** "fill" or "inside" from `"fill"` or `{ "mode": "fill" }`; undefined for anything else. */
+export const modeOf = (v) => { const m = typeof v === 'string' ? v : v?.mode; return m === 'fill' || m === 'inside' ? m : undefined; };
+/** The mode asked for: the scene's own `camera`, else the spec's, else the style's `camera.mode`. */
+export const askedMode = (spec, style, scene) => modeOf(scene?.camera) ?? modeOf(spec.camera) ?? modeOf(style.camera) ?? 'inside';
+/**
+ * How the camera zooms in a scene. `fill` (flat clip and image scenes of a fill-mode style): the whole
+ * window grows over the background until the recording fills the frame. `inside`: the window stays put
+ * and the zoom crops inside it (also every full-bleed, split and card scene).
+ */
+export const cameraModeOf = (spec, style, scene) => {
+  const flat = scene.type === 'image' || (scene.type === 'clip' && (scene.frame ?? 'flat') !== 'full');
+  return flat && askedMode(spec, style, scene) === 'fill' ? 'fill' : 'inside';
+};
+/** The camera at frame f of a clip or image scene: { cam (x, y, zoom), xf } where xf maps the window at rest to the screen (fill mode) or is null. */
+export const cameraPose = (spec, style, scene, f, fps, ease) => {
+  const cam = cameraAt(scene.moves, f, fps, ease);
+  if (cameraModeOf(spec, style, scene) !== 'fill') return { cam, xf: null };
+  return { cam, xf: fillTransform(cam, sceneLayout(spec, style, scene).view, spec.width, spec.height) };
+};
+/** Does a caption bring its own plate (so it stays readable over any recording)? Otherwise fill mode puts a scrim behind it. */
+export const captionHasPlate = (style) => {
+  const k = style.caption;
+  return k.variant === 'pill' || k.variant === 'glass' || (k.variant === 'bar' && !!k.bar?.background);
+};
+
 /**
  * Where a caption goes: the CSS of its wrapper (positioned in canvas px) and a
  * key that goes in its piece id. `under` is the band below the window,
  * `overlay` the bottom of the window, `slot` the shell's own bottom strip.
+ * `place` 'top' (see captionPlacements) lifts it to the top title-safe line
+ * (caption.top), or the top of the window for an overlay caption.
+ * In fill mode a full-bleed scene's caption sits where the flat scenes' do
+ * (the middle of the strip under the window), so captions never jump between scenes.
  */
-export const captionPos = (spec, style, scene) => {
+export const captionPos = (spec, style, scene, place = 'bottom') => {
   const { width: W, height: H } = spec, c = style.caption;
   const l = scene.type === 'split' ? splitBoxes(style, W, H, scene.aspect)[0] : sceneLayout(spec, style, scene);
   const left = c.align === 'left';
-  let css, key, padLeft = l && !l.full ? l.view.left : W * 0.05;
-  if (!l || l.full) { css = `left:0;right:0;bottom:${H * c.offset}px`; key = 'b'; }
+  const fillStyle = l && scene.type !== 'split' && askedMode(spec, style, scene) === 'fill';
+  // top / bottom: the wrapper's edges in px from the canvas top / bottom (null: not set), for the placement estimate
+  let css, key, top = null, bottom = null, padLeft = l && !l.full ? l.view.left : W * 0.05;
+  if (place === 'top' && l) {
+    const overlay = c.placement === 'overlay' && !l.full && !fillStyle;
+    top = overlay ? l.view.top + H * c.inset : H * (c.top ?? 0.05);
+    css = `left:0;right:0;top:${top}px`; key = `t${r2(top)}`;
+    if (overlay) padLeft = l.view.left + W * 0.02;
+  } else if (fillStyle && (l.full || c.placement === 'under')) {
+    // fill mode: the middle of the strip under the window at rest (above a small bottom margin); a caption
+    // taller than the strip (two lines) grows upward over the window's edge, never off the frame
+    const b = l.full ? frameBox(style, W, H, scene.aspect) : l;
+    top = b.outer.top + b.outer.h; bottom = H * FILL_BOTTOM;
+    css = `left:0;right:0;bottom:${bottom}px;min-height:${H - bottom - top}px`; key = `f${r2(top)}`; padLeft = b.view.left;
+  } else if (!l || l.full) { bottom = H * c.offset; css = `left:0;right:0;bottom:${bottom}px`; key = 'b'; }
   else if (c.placement === 'overlay') {
-    css = `left:0;right:0;bottom:${H - (l.view.top + l.view.h) + H * c.inset}px`; key = `o${r2(l.view.top + l.view.h)}`;
+    bottom = H - (l.view.top + l.view.h) + H * c.inset;
+    css = `left:0;right:0;bottom:${bottom}px`; key = `o${r2(l.view.top + l.view.h)}`;
     padLeft = l.view.left + W * 0.02;
   } else if (c.placement === 'slot' && l.ins.b > 0) {
+    top = l.view.top + l.view.h; bottom = H - top - l.ins.b;
     css = `left:${l.outer.left}px;width:${l.outer.w}px;top:${l.view.top + l.view.h}px;height:${l.ins.b}px`; key = `s${r2(l.view.top + l.view.h)}`;
     padLeft = W * 0.012;   // relative to the strip (the wrapper already starts at outer.left)
-  } else { const t = l.outer.top + l.outer.h; css = `left:0;right:0;top:${t}px;bottom:0`; key = `${t}`; }
-  return { css, key: `${key}${left ? 'L' : ''}`, align: left ? 'flex-start' : 'center', padLeft: left ? padLeft : 0 };
+  } else { const t = l.outer.top + l.outer.h; top = t; bottom = 0; css = `left:0;right:0;top:${t}px;bottom:0`; key = `${t}`; }
+  return { css, key: `${key}${left ? 'L' : ''}`, align: left ? 'flex-start' : 'center', padLeft: left ? padLeft : 0, top, bottom };
 };
+
+// ------------------------------------------------------------ caption placement
+/** The captions of a clip or image scene with the seconds each one shows: [{ cap (the timed caption, or null for scene.caption), text, tag, from, to }]. */
+export const captionTimes = (scene) => {
+  if (scene.type === 'clip' && scene.captions?.length) {
+    const s = [...scene.captions].sort((a, b) => a.atSec - b.atSec);
+    return s.map((c, i) => ({ cap: c, text: c.text, tag: c.tag ?? scene.tag, from: c.atSec, to: i + 1 < s.length ? s[i + 1].atSec : scene.durationSec }));
+  }
+  return has(scene.caption) ? [{ cap: null, text: scene.caption, tag: scene.tag, from: 0, to: scene.durationSec }] : [];
+};
+/** Where a caption was placed ('top' or 'bottom'): captionPlacements writes it on the caption (or the scene, for scene.caption). */
+export const placeOf = (scene, cap) => (cap ? cap._place : scene._captionPlace) ?? 'bottom';
+
+const ACTION_PAD = 0.06;   // the action's neighbourhood: a caption within 6 % of W / H of it counts as on top of it
+const MIN_CLASH = 0.2;     // seconds: a graze shorter than this (a few frames of a camera move) does not move a caption
+/**
+ * Decide, once per caption, whether it moves to the top (WCAG 1.2.2: captions must not hide what
+ * the viewer needs to see; broadcasters move them up when the bottom carries essential information).
+ * Only captions that can sit over the recording are considered: fill mode, a full-bleed recording,
+ * or the overlay placement. A caption goes to the top when, at any moment it shows, its bottom spot
+ * is on or within 6 % (of W and H) of the action, and the top spot is clear more of that time.
+ * The action is, in screen space under the camera: the callouts showing (ring and label), the
+ * camera's focus while it is zoomed in, and `actions` from the take (clicks, typing:
+ * [{ t0, t1, box: [x, y, w, h] }] in seconds of the scene and fractions of the recording).
+ * Writes `_place = 'top'` on the timed caption (or `_captionPlace` on the scene). Node runs it once
+ * (compose.mjs) and the page reads the result, so captured pieces sit at known places.
+ */
+export const captionPlacements = (spec, style, scene, actions = []) => {
+  if (scene.type !== 'clip' && scene.type !== 'image') return;
+  const times = captionTimes(scene);
+  const lay = sceneLayout(spec, style, scene), K = style.caption;
+  const fill = cameraModeOf(spec, style, scene) === 'fill';
+  if (!times.length || (!fill && !lay.full && K.placement !== 'overlay') || (K.placement === 'slot' && !lay.full)) return;
+  const { width: W, height: H } = spec, fps = spec.fps ?? 60, ease = makeCameraEase(style.camera?.ease), view = lay.view;
+  const mx = W * ACTION_PAD, my = H * ACTION_PAD, u = W / 1920;
+  const hit = (a, b) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1;
+  // the caption's box at a spot, from an estimate of its size (0.52 em a character; wraps inside caption.maxWidth)
+  const boxAt = (text, tag, place) => {
+    const size = W * K.size, chars = stripEmphasis(text).length + (tag ? String(tag).length + 2 : 0);
+    let w = chars * 0.52 * size, lines = 1;
+    const maxW = K.maxWidth ? K.maxWidth * W : W * 0.9;
+    if (w > maxW) { lines = Math.ceil(w / maxW); w = maxW; }
+    w += 2.3 * size; const h = lines * 1.3 * size + 1.2 * size;
+    const pos = captionPos(spec, style, scene, place), { top, bottom } = pos;
+    const y0 = top !== null && bottom !== null ? Math.min(top + (H - bottom - top - h) / 2, H - bottom - h) : top !== null ? top : H - bottom - h;
+    const x0 = K.align === 'left' ? pos.padLeft : (W - w) / 2;
+    return { x0, x1: x0 + w, y0, y1: y0 + h };
+  };
+  const trs = [], step = 1 / 12;
+  for (let t = 0; t <= scene.durationSec + 1e-6; t += step) {
+    const { cam, xf } = cameraPose(spec, style, scene, t * fps, fps, ease);
+    const inside = xf ? null : cameraTransform(cam, view.w, view.h);
+    // recording fractions (u, v) -> screen px, and the part of the screen the recording covers
+    const at = (x, y) => (xf ? [xf.tx + xf.z * (view.left + x * view.w), xf.ty + xf.z * (view.top + y * view.h)] : [view.left + inside.tx + x * view.w * inside.z, view.top + inside.ty + y * view.h * inside.z]);
+    const shown = xf ? { x0: Math.max(0, xf.tx + xf.z * view.left), y0: Math.max(0, xf.ty + xf.z * view.top), x1: Math.min(W, xf.tx + xf.z * (view.left + view.w)), y1: Math.min(H, xf.ty + xf.z * (view.top + view.h)) }
+      : { x0: view.left, y0: view.top, x1: view.left + view.w, y1: view.top + view.h };
+    const zones = [];
+    const zone = (x, y, w, h, extraTop = 0, extraBottom = 0) => {   // a box (or a point) of the recording, clipped to what shows, grown by the neighbourhood
+      const [ax, ay] = at(x, y), [bx, by] = at(x + w, y + h);
+      const r = { x0: Math.max(ax, shown.x0), y0: Math.max(ay - extraTop, shown.y0), x1: Math.min(bx, shown.x1), y1: Math.min(by + extraBottom, shown.y1) };
+      if (r.x0 <= r.x1 && r.y0 <= r.y1) zones.push({ x0: r.x0 - mx, x1: r.x1 + mx, y0: r.y0 - my, y1: r.y1 + my });
+    };
+    for (const c of scene.callouts ?? []) {
+      if (!c.box || c.atSec === undefined || t < c.atSec || t > c.atSec + (c.forSec ?? style.callout.forSec)) continue;
+      const label = c.label ? 60 * u : 0, below = c.box[1] < 0.18;   // the label rides above the box (below it near the top)
+      zone(...c.box, below ? 0 : label, below ? label : 0);
+    }
+    if (cam.zoom > 1.02) zone(cam.x ?? 0.5, cam.y ?? 0.5, 0, 0);
+    for (const a of actions) if (t >= a.t0 && t <= a.t1) zone(...a.box);
+    trs.push({ t, zones });
+  }
+  const report = [];
+  for (const c of times) {
+    const spots = { bottom: boxAt(c.text, c.tag, 'bottom'), top: boxAt(c.text, c.tag, 'top') }, n = { bottom: 0, top: 0 }, when = [];
+    for (const s of trs) if (s.t >= c.from - 1e-6 && s.t <= c.to + 1e-6) for (const k of ['bottom', 'top']) if (s.zones.some((z) => hit(z, spots[k]))) { n[k]++; if (k === 'bottom') when.push(s.t); }
+    const top = n.bottom * step >= MIN_CLASH - 1e-9 && n.top < n.bottom;
+    if (c.cap) { if (top) c.cap._place = 'top'; else delete c.cap._place; }
+    else if (top) scene._captionPlace = 'top'; else delete scene._captionPlace;
+    report.push({ text: c.text, place: top ? 'top' : 'bottom', bottomSec: +(n.bottom * step).toFixed(2), topSec: +(n.top * step).toFixed(2), from: when.length ? +when[0].toFixed(2) : null, to: when.length ? +when.at(-1).toFixed(2) : null });
+  }
+  return report;
+};
+
 /** Size of a callout mark's picture at camera zoom 1, in output px (it is captured at 2x). */
 export const markSize = (view, c, u, pad) => ({ w: c.box[2] * view.w + pad * 2 * u, h: c.box[3] * view.h + pad * 2 * u });

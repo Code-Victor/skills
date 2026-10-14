@@ -256,7 +256,7 @@ audience, then say it in one line (`"style": "editorial"`):
 
 | `style` | The idea | Pick it for | Watch out |
 |---|---|---|---|
-| `studio` | Soft light gradient, white window, pill captions | The safe default; Slack, PRs, docs | Least distinctive |
+| `studio` | Soft light gradient, a big white window a zoom grows to fill the frame, pill captions | The safe default; Slack, PRs, docs | Least distinctive |
 | `midnight` | Near-black stage, glass captions, one pale accent | Launches, dark-mode products, a premium feel | A light app is a bright slab; slower pacing |
 | `editorial` | Warm paper, serif, captions as margin notes | Changelogs, weekly updates, writing-led demos | Least showy; recording is smaller |
 | `terminal` | Mono type, typed text, stepped motion | Developer tools, PR demos for engineers | Cold for consumer products; typed text needs time |
@@ -274,7 +274,7 @@ again), then writes a sheet and a picker page (`references/styles.md`).
 
 | `frame` | What it is | Use for |
 |---|---|---|
-| `flat` (default) | The recording in a rounded window; `moves` push in *inside* the window, like a screen-recording editor | Most scenes |
+| `flat` (default) | The recording in a rounded window. In `studio` and `midnight` a zoom grows the whole window until the recording fills the frame (Cap, Screen Studio); in the other styles it crops *inside* a fixed window. `"camera": "inside"` or `"fill"` on the spec or the scene overrides the style | Most scenes |
 | `full` | Edge to edge, no window | Dense UI that needs every pixel |
 | `stage` | A tilted 3D product shot | Remotion renderer only (see below); here it renders as `flat` with a warning, in every style |
 
@@ -302,11 +302,15 @@ their titles have their own default and treat these as variants.
 accented word (colour or italic, the style decides); `\*` is a literal
 asterisk. Caption files drop the markers.
 
-**Captions**: one short sentence each, at most 42 characters a line, 15 to 17
-characters a second (20 at most), 1.5 s minimum. `captions` gives a long clip
-several in turn. Where they sit depends on the style: under the frame in most,
-in a margin column in `editorial`, in the photo's strip in `sketch`. `terminal`
-and `sketch` type them, so leave a little extra time.
+**Captions**: one short sentence each, at most 42 characters a line and two
+lines, 15 to 17 characters a second, 1.5 s minimum; the check warns past any
+of those. A caption says what to look at; the story belongs on the title,
+issue and list cards. `captions` gives a long clip several in turn. Where they
+sit depends on the style: in the strip under the window in `studio` and
+`midnight` (over the recording, on a plate, while a zoom fills the frame, and
+at the top for their whole time when the action is under that spot), under the
+frame in `terminal`, in a margin column in `editorial`, in the photo's strip
+in `sketch`. `terminal` and `sketch` type them, so leave a little extra time.
 
 **Callouts**: a ring (or `spotlight`) around something small the caption
 names; name a `mark` and the auto-camera places and times it, ending at the

@@ -174,7 +174,7 @@ export default {
       subtitle: { from: 0.05, to: 0.55, rise: 10 },
     },
   },
-  camera: { ease: { type: 'bezier', curve: [0.5, 0, 0.2, 1] }, motionBlur: null },
+  camera: { mode: 'inside', ease: { type: 'bezier', curve: [0.5, 0, 0.2, 1] }, motionBlur: null },   // inside: the page is the identity, the zoom stays in its column
 
   transition: {
     default: 'page-slide', sec: 0.6, stepped: false,

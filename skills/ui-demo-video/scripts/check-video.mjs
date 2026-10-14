@@ -21,7 +21,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
-  DEMO_KEYS, KNOWN_TRANSITIONS, SAFE_NAME, SCENE_KEYS, STEP_KEYS, TAKE_KEYS, THEME_KEYS, TOP_KEYS,
+  CAMERA_MODES, DEMO_KEYS, KNOWN_TRANSITIONS, SAFE_NAME, SCENE_KEYS, STEP_KEYS, TAKE_KEYS, THEME_KEYS, TOP_KEYS,
   fillTiming, gapSec, isNote, resolveSpec, sceneSpans, styleName, takesUsed, STYLE_KEYS,
 } from './spec-lib.mjs';
 import { STYLES, TOKEN_GROUPS, flatten, resolveStyle, styleNames, unknownStyleMessage } from './compositor/styles/index.js';
@@ -30,6 +30,9 @@ import { stripEmphasis } from './compositor/layout.js';
 // Reading speed: 20 characters a second is the ceiling Netflix sets for adult
 // subtitles (15 to 17 reads comfortably); anything needs about 1.5 s.
 const CPS = 20;
+// Captions follow subtitle practice (Netflix, BBC, DCMP): at most 42 characters a line,
+// two lines, about 17 characters a second. The story belongs on title, issue and list cards.
+const CAPTION_LINE = 42, CAPTION_LINES = 2, CAPTION_CPS = 17;
 const SCENES = new Set(Object.keys(SCENE_KEYS));
 
 // Keys the file may carry that nothing reads are almost always typos
@@ -81,6 +84,12 @@ function checkSpecInner(spec, { pub = '.', files = true, demo = false } = {}) {
   const probe = (src) => media(join(pub, src));
 
   unknown(spec, demo ? [...TOP_KEYS, ...DEMO_KEYS] : TOP_KEYS, 'spec', out, demo ? 'errors' : 'warnings');
+  const cameraOk = (v, at) => {
+    const m = typeof v === 'string' ? v : isObj(v) ? v.mode : undefined;
+    if (v !== undefined && !CAMERA_MODES.includes(m)) errors.push(`${at}: camera must be "fill" or "inside" (or { "mode": "fill" }); got ${JSON.stringify(v)}`);
+    if (isObj(v)) unknown(v, ['mode'], `${at} camera`, out, 'warnings');
+  };
+  cameraOk(spec.camera, 'spec');
   unknown(spec.theme, THEME_KEYS, 'theme', out, demo ? 'errors' : 'warnings');
   // The look: "style": "midnight" or { "preset": "midnight", "overrides": { "post": { "grain": 0.02 } } }
   let styleTransitions = [];
@@ -144,6 +153,19 @@ function checkSpecInner(spec, { pub = '.', files = true, demo = false } = {}) {
     if (visibleSec < need)
       warnings.push(`${at}: "${text.slice(0, 40)}" is on screen ${visibleSec.toFixed(1)}s, needs about ${need.toFixed(1)}s to read`);
   };
+  // a caption: short lines, two at most, read at about 17 characters a second (a line break in the text starts a new line)
+  const caption = (at, text, visibleSec) => {
+    if (!text || typeof text !== 'string') return readable(at, text, visibleSec);
+    const plain = stripEmphasis(text), lines = plain.split('\n'), long = Math.max(...lines.map((l) => l.trim().length));
+    const cut = `"${plain.slice(0, 40).replace(/\n/g, ' / ')}${plain.length > 40 ? '...' : ''}"`;
+    if (lines.length > CAPTION_LINES || Math.ceil(long / CAPTION_LINE) * lines.length > CAPTION_LINES)
+      warnings.push(`${at}: caption ${cut} runs past ${CAPTION_LINES} lines of ${CAPTION_LINE} characters; split it into timed captions or put the story on a title, issue or list card`);
+    else if (long > CAPTION_LINE)
+      warnings.push(`${at}: caption ${cut} is ${long} characters on one line (keep a line to ${CAPTION_LINE}); shorten it or split it into timed captions`);
+    const cps = plain.replace(/\s+/g, ' ').trim().length / Math.max(0.1, visibleSec);
+    if (cps > CAPTION_CPS) warnings.push(`${at}: caption ${cut} asks for ${cps.toFixed(0)} characters a second over ${visibleSec.toFixed(1)}s (about ${CAPTION_CPS} reads comfortably)`);
+    readable(at, text, visibleSec);
+  };
   const exists = (at, src, what = 'file') => {
     if (files && !existsSync(join(pub, src))) {
       errors.push(`${at}: missing ${what} ${join(pub, src)}`);
@@ -202,11 +224,13 @@ function checkSpecInner(spec, { pub = '.', files = true, demo = false } = {}) {
     if (s.type === 'split') {
       clipFile(`${at} before`, s.before, s.durationSec, 1, files ? s.aspect : undefined);
       clipFile(`${at} after`, s.after, s.durationSec, 1, files ? s.aspect : undefined);
-      readable(at, s.caption, s.durationSec - 0.6);
+      caption(at, s.caption, s.durationSec - 0.6);
       return;
     }
     // clip and image
     clipFile(at, s, s.durationSec, s.playbackRate ?? 1, files ? s.aspect : undefined);
+    cameraOk(s.camera, at);
+    if (s.camera !== undefined && s.frame === 'full') warnings.push(`${at}: camera has no effect on a full-bleed scene (the recording already fills the frame)`);
     if (demo && s.type === 'image' && s.take) errors.push(`${at}: an image scene shows a still; give it "src" (a png or jpg), not a take`);
     if (files && s.autoCamera && s.movesFrom !== 'auto-camera')
       errors.push(`${at}: has autoCamera but no generated moves; run scripts/auto-camera.mjs on this file`);
@@ -237,9 +261,9 @@ function checkSpecInner(spec, { pub = '.', files = true, demo = false } = {}) {
         if (!c.text) errors.push(`${at}: caption ${j} has no text`);
         if (c.atSec < 0 || c.atSec >= s.durationSec) errors.push(`${at}: caption at ${c.atSec}s is outside the scene`);
         const until = j + 1 < cs.length ? cs[j + 1].atSec : s.durationSec;
-        readable(at, c.text, until - c.atSec - 0.6);
+        caption(at, c.text, until - c.atSec - 0.6);
       });
-    } else readable(at, s.caption, s.durationSec - 0.6);
+    } else caption(at, s.caption, s.durationSec - 0.6);
   });
   if (typeof spec.music?.src === 'string') exists('music', spec.music.src);
   const stages = spec.scenes.filter((s) => s?.frame === 'stage').length;

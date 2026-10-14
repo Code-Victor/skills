@@ -104,6 +104,22 @@ void main(){
   o = c * (uOpacity * win);
 }`;
 
+// Fill mode draws the whole window scaled (screen = T + z * window px): the same two shaders with the edge,
+// the ring and the taps measured in screen px (uPxScale = z). Separate programs, so the unscaled ones stay
+// exactly what they were (an inside-mode render is bit-identical).
+const scaled = (src, pairs) => pairs.reduce((s, [a, b]) => { if (!s.includes(a)) throw new Error(`internal: shader text "${a}" not found`); return s.replace(a, b); }, src);
+const VIDEO_SCALED = scaled(VIDEO, [
+  ['uniform float uRadius, uTopR, uOpacity;', 'uniform float uRadius, uTopR, uOpacity, uPxScale;'],
+  ['uWin.zw * .5, r), 0., 1.);', 'uWin.zw * .5, r) * uPxScale, 0., 1.);'],
+  ['vec2 off = (vec2(float(i), float(b)) + .5) / k - .5;', 'vec2 off = ((vec2(float(i), float(b)) + .5) / k - .5) / uPxScale;'],
+]);
+const CALLOUT_SCALED = scaled(CALLOUT, [
+  ['uniform float uWinR, uTopR;', 'uniform float uWinR, uTopR, uPxScale;'],
+  ['uWin.zw * .5, r), 0., 1.);', 'uWin.zw * .5, r) * uPxScale, 0., 1.);'],
+  ['float d = sdRound(vPx, uBox.xy, uBox.zw, uBoxR);', 'float d = sdRound(vPx, uBox.xy, uBox.zw, uBoxR) * uPxScale;'],
+  ['(d - uRing)', '(d - uRing * uPxScale)'],
+]);
+
 const BLUR = `#version 300 es
 precision highp float;
 uniform sampler2D uTex; uniform vec2 uDir; uniform float uSigma;   // uDir: one source texel step in uv
@@ -186,7 +202,9 @@ export class GL {
     this.progs = {
       quad: this.program(QUAD, ['uTex', 'uUV', 'uTexSize', 'uOpacity', 'uBright', 'uSigma', 'uClipX', 'uClipY', 'uMaskY']),
       video: this.program(VIDEO, ['uTex', 'uWin', 'uRadius', 'uTopR', 'uOpacity', 'uSrcOrigin', 'uSrcPerPx', 'uTexSize', 'uK', 'uN', 'uOrigin0', 'uPer0']),
+      videoScaled: this.program(VIDEO_SCALED, ['uTex', 'uWin', 'uRadius', 'uTopR', 'uOpacity', 'uPxScale', 'uSrcOrigin', 'uSrcPerPx', 'uTexSize', 'uK', 'uN', 'uOrigin0', 'uPer0']),
       callout: this.program(CALLOUT, ['uWin', 'uWinR', 'uTopR', 'uBox', 'uBoxR', 'uRing', 'uOpacity', 'uFillA', 'uDimA', 'uAccent', 'uDim', 'uDash']),
+      calloutScaled: this.program(CALLOUT_SCALED, ['uWin', 'uWinR', 'uTopR', 'uPxScale', 'uBox', 'uBoxR', 'uRing', 'uOpacity', 'uFillA', 'uDimA', 'uAccent', 'uDim', 'uDash']),
       blur: this.program(BLUR, ['uTex', 'uDir', 'uSigma']),
       glass: this.program(GLASS, ['uA', 'uB', 'uBox', 'uRad', 'uOpacity', 'uHasB', 'uSat', 'uTint']),
       grade: this.program(GRADE, ['uTex', 'uSat', 'uDim', 'uOpacity', 'uTint', 'uUV']),
@@ -314,10 +332,11 @@ export class GL {
   }
   /**
    * A recording in a rounded window; srcOrigin/srcPerPx map output px to source px.
-   * o.topR: radius of the top corners (0 under a chrome bar); o.prev: { origin, perPx, n } the previous camera, for motion blur; o.maxK: tap limit.
+   * o.topR: radius of the top corners (0 under a chrome bar); o.prev: { origin, perPx, n } the previous camera, for motion blur; o.maxK: tap limit;
+   * o.pxScale: screen px per window px when the window itself is drawn scaled (fill mode), so the taps and the edge stay one screen px.
    */
   window(tex, win, radius, srcOrigin, srcPerPx, opacity = 1, o = {}) {
-    const gl = this.gl, P = this.progs.video;
+    const ps = o.pxScale ?? 1, gl = this.gl, P = ps !== 1 ? this.progs.videoScaled : this.progs.video;
     this.use(P, { x: Math.floor(win.x) - 1, y: Math.floor(win.y) - 1, w: Math.ceil(win.w) + 3, h: Math.ceil(win.h) + 3 });
     this.bind(tex); gl.uniform1i(P.u.uTex, 0);
     gl.uniform4f(P.u.uWin, win.x, win.y, win.w, win.h); gl.uniform1f(P.u.uRadius, radius); gl.uniform1f(P.u.uTopR, o.topR ?? radius);
@@ -325,14 +344,17 @@ export class GL {
     const pv = o.prev;
     gl.uniform2f(P.u.uOrigin0, ...(pv ? pv.origin : srcOrigin)); gl.uniform2f(P.u.uPer0, ...(pv ? pv.perPx : srcPerPx)); gl.uniform1i(P.u.uN, pv ? pv.n : 1);
     gl.uniform2f(P.u.uTexSize, tex.w, tex.h); gl.uniform1f(P.u.uOpacity, opacity);
-    const foot = Math.max(srcPerPx[0], srcPerPx[1]);
+    if (ps !== 1) gl.uniform1f(P.u.uPxScale, ps);
+    const foot = Math.max(srcPerPx[0], srcPerPx[1]) / ps;
     gl.uniform1i(P.u.uK, Math.max(1, Math.min(pv && pv.n > 1 ? 2 : (o.maxK ?? 4), Math.ceil(foot))));
     this.fill();
   }
+  /** The callout highlight over a window; `c.pxScale` as in window(). */
   callout(win, winR, c, topR = winR) {
-    const gl = this.gl, P = this.progs.callout;
+    const ps = c.pxScale ?? 1, gl = this.gl, P = ps !== 1 ? this.progs.calloutScaled : this.progs.callout;
     this.use(P, win);
     gl.uniform4f(P.u.uWin, win.x, win.y, win.w, win.h); gl.uniform1f(P.u.uWinR, winR); gl.uniform1f(P.u.uTopR, topR);
+    if (ps !== 1) gl.uniform1f(P.u.uPxScale, ps);
     gl.uniform4f(P.u.uBox, c.cx, c.cy, c.hw, c.hh); gl.uniform1f(P.u.uBoxR, c.radius);
     gl.uniform1f(P.u.uRing, c.ring); gl.uniform1f(P.u.uOpacity, c.opacity);
     gl.uniform1f(P.u.uFillA, c.fillA); gl.uniform1f(P.u.uDimA, c.dimA); gl.uniform3f(P.u.uAccent, ...c.accent);

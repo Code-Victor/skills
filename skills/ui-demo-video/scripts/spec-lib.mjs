@@ -64,12 +64,15 @@ const CLIPLIKE = ['src', 'aspect', 'tag', 'caption', 'callouts'];
 export const SCENE_KEYS = {
   title: [...COMMON, 'type', 'text', 'subtitle', 'effect'],
   issue: [...COMMON, 'type', 'source', 'id', 'title', 'quote', 'reporter', 'status'],
-  clip: [...COMMON, ...CLIPLIKE, 'type', 'trimStartSec', 'frame', 'moves', 'autoCamera', 'movesFrom', 'captions', 'playbackRate'],
+  clip: [...COMMON, ...CLIPLIKE, 'type', 'trimStartSec', 'frame', 'moves', 'autoCamera', 'movesFrom', 'captions', 'playbackRate', 'camera'],
   split: [...COMMON, 'type', 'aspect', 'before', 'after', 'caption', 'tag'],
-  image: [...COMMON, ...CLIPLIKE, 'type', 'moves'],
+  image: [...COMMON, ...CLIPLIKE, 'type', 'moves', 'camera'],
   list: [...COMMON, 'type', 'title', 'items', 'subtitle'],
 };
-export const TOP_KEYS = ['width', 'height', 'fps', 'theme', 'style', 'transition', 'transitionSec', 'transitions', 'scenes', 'music'];
+export const TOP_KEYS = ['width', 'height', 'fps', 'theme', 'style', 'camera', 'transition', 'transitionSec', 'transitions', 'scenes', 'music'];
+// "camera": "fill" (the zoom grows the whole window until the recording fills the frame) or "inside"
+// (the zoom crops inside a fixed window), or { "mode": ... }; on the spec or on a clip or image scene.
+export const CAMERA_MODES = ['fill', 'inside'];
 export const DEMO_KEYS = ['name', 'url', 'capture', 'takes'];
 // "style" is a name ("midnight") or { preset, overrides }; the names live in compositor/styles/.
 export const STYLE_KEYS = ['preset', 'overrides'];

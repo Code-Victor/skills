@@ -117,7 +117,7 @@ const build = {
     const lit = c.tag && String(c.color).toLowerCase() === String(c.accent).toLowerCase();
     const tag = c.tag ? `<span style="${lit ? `background:${c.accent};color:${c.style.palette.onAccent};font-weight:600;` : `color:${c.color};box-shadow:inset 0 0 0 1px ${c.rgba(c.color, 0.5)};font-weight:500;`}font-family:${c.font('mono')};font-size:0.8em;letter-spacing:${MONO_TRACK};padding:0.14em 0.62em;border-radius:0.5em;flex-shrink:0;line-height:1.3">${c.esc(c.tag)}</span>` : '';
     return { html: `<div style="position:absolute;${pos.css};display:flex;align-items:center;justify-content:${pos.align};padding-left:${pos.padLeft}px">
-      <div id="pill" style="display:inline-flex;align-items:center;gap:${size * 0.75}px;max-width:${c.W * 0.7}px;padding:${size * 0.62}px ${size * 1.15}px;border-radius:${p.radius * u}px;box-shadow:inset 0 0 0 1px ${p.border},inset 0 1px 0 rgba(255,255,255,0.07);font-family:${c.font('text')};font-size:${size}px;font-weight:${k.weight};line-height:1.32;letter-spacing:-0.005em;color:${k.color}">
+      <div id="pill" style="display:inline-flex;align-items:center;gap:${size * 0.75}px;max-width:${c.W * 0.7}px;padding:${size * 0.5}px ${size * 1.1}px;border-radius:${p.radius * u}px;box-shadow:inset 0 0 0 1px ${p.border},inset 0 1px 0 rgba(255,255,255,0.07);font-family:${c.font('text')};font-size:${size}px;font-weight:${k.weight};line-height:1.32;letter-spacing:-0.005em;color:${k.color}">
         ${tag}<span data-type style="text-wrap:balance">${c.rich(c.text)}</span></div></div>` };
   },
 };
@@ -162,8 +162,8 @@ export default {
   post: { dither: 2.5, grain: 0.014, grainSize: 1.4, vignette: 0.14, vignetteSoftness: 0.7 },
 
   window: {
-    top: 0.05, maxHeight: 0.78,                         // leaves a roomy band for a two-line caption
-    radius: 0.0105,
+    // the fill framing (studio's size and strip); a little rounder than studio
+    radius: 0.0125,
     fill: '#0b0c10',
     // lifted off the ground by offset and negative spread, no wide halo of black
     shadow: '0 50px 100px -24px rgba(0,0,0,0.7),0 18px 36px -14px rgba(0,0,0,0.5)',
@@ -175,7 +175,7 @@ export default {
   },
 
   caption: {
-    variant: 'glass', placement: 'under', size: 0.0158, weight: 500, color: FG,
+    variant: 'glass', placement: 'under', size: 0.0187, weight: 500, color: FG,   // 36 px (it may sit over the recording): the largest whose glass fits the strip under the window
     enter: 'blur', blurPx: 10, blurSec: 0.42, delay: 0.3, exit: 0.4,
     // 78 % near-black: text stays above 4.5:1 even over a full-bleed white recording
     glass: { blur: 22, tint: 'rgba(8,9,12,0.78)', saturate: 1, border: 'rgba(255,255,255,0.12)', radius: 20, shadow: null },
@@ -204,6 +204,7 @@ export default {
     },
   },
   camera: {
+    mode: 'fill',                                                     // the zoom grows the lit window until the recording fills the frame
     ease: { type: 'spring', stiffness: 220, damping: 40, mass: 1 },   // overdamped: arrives without overshoot
     motionBlur: { shutter: 0.5, samples: 6 },
   },

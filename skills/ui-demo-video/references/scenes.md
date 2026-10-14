@@ -62,10 +62,11 @@ Make the still with `node scripts/capture.mjs shot --url <u> --out
 | `captions` | `[{ "atSec", "text", "tag"? }]`: several in turn, for a scene that walks through steps. Each shows until the next |
 | `autoCamera` | `true` or options: let `scripts/auto-camera.mjs` write `moves` from the take's events file |
 | `moves` | Camera keyframes `{ atSec, x, y, zoom }` (x, y = focus as fractions of the recording) |
+| `camera` | `"fill"` (a zoom grows the whole window until the recording fills the frame) or `"inside"` (the zoom crops inside a fixed window). Default: the spec's top-level `camera`, else the style's (`studio` and `midnight` fill). Clip and image scenes; no effect on `frame: "full"` |
 | `callouts` | `[{ "mark" or "atSec" + "box", "label"?, "style"? }]`: a ring (or `"style": "spotlight"`, which also dims the rest) that rides with the camera |
 | `playbackRate` | Play faster: `1.2` covers 1.2 s of recording per second of video. Good for typing and loading; say so if time matters. Clip scenes only |
 | `trimStartSec` | Skip the start of the recording |
-| `frame` | `flat` (default), `full` (edge to edge, no window) or `stage` (tilted 3D; hero moments only, and the one look only the Remotion renderer draws: the default renderer draws it as `flat` and warns) |
+| `frame` | `flat` (default), `full` (edge to edge, no window, no logo) or `stage` (tilted 3D; hero moments only, and the one look only the Remotion renderer draws: the default renderer draws it as `flat` and warns) |
 
 ## The auto-camera
 
@@ -106,15 +107,28 @@ lone click), `endWide`. Then check the result on the contact sheet
 (`out/<name>-sheet.png`): if a caption talks about something the camera isn't
 on, mark it in the steps or add a key.
 
+How a zoom looks is the style's: in `studio` and `midnight` the whole window
+grows over the background until the recording fills the frame (from about
+1.2x for a 16:9 recording, 1.3x for 16:10), sliding toward the focus; in the
+other styles the window stays put and the zoom crops inside it. The same
+`moves` work in both; `"camera": "inside"` or `"fill"` on the spec or a scene
+changes it (`styles.md`).
+
 ## Captions
 
 - One short sentence, sentence case, plain words, at most 42 characters a
-  line (Netflix). Say what it does for the user, not how it's built.
+  line and two lines (Netflix, BBC). Say what it does for the user, not how
+  it's built. A caption names what to look at; the story belongs on the title,
+  issue and list cards. Split a longer thought into timed `captions`.
 - Reading speed: 15 to 17 characters a second reads comfortably; 20 is the
-  ceiling for adults. `check-video.mjs` warns past 20, counting the caption's
-  entrance and exit.
+  ceiling for adults. `check-video.mjs` warns past 17, past 42 characters a
+  line and past two lines, counting the caption's entrance and exit.
 - Each caption needs at least 1.5 s on screen, however short.
-- Captions stay clear of the UI. In `studio`, `midnight` and `terminal` they sit
+- Captions stay clear of the action. In `studio` and `midnight` they sit in
+  the strip under the window, and over the recording once a zoom has filled
+  the frame, on a plate that reads over any page; a caption whose spot would
+  cover the action (a callout, where the camera looks, a click) moves to the
+  top of the frame for its whole time on screen. In `terminal` they sit
   in a band under the frame; in `editorial` they are margin notes in a column
   beside the recording; in `sketch` they are written into the strip of the
   photo print. They're burned in because Slack and GitHub play videos muted and

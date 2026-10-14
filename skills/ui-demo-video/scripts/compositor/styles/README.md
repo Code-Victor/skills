@@ -6,7 +6,7 @@ reads it; the Remotion template ignores it (it always renders the studio look).
 
 ```
 styles/
-  studio.js     today's look, every token spelled out (read it: it is the reference)
+  studio.js     the default look, every token spelled out (read it: it is the reference)
   midnight.js   a style that extends studio (read it: it is the worked example)
   index.js      the registry: add your file here (import + one line in STYLES)
 ```
@@ -141,9 +141,9 @@ computed without banding and dithered once at the end.
 ### window
 | token | default | meaning |
 |---|---|---|
-| maxWidth, maxHeight | 0.9, 0.8 | fractions of W and H the whole window (shell + recording) may take |
-| top, align, margin | 0.055, `center`, 0.05 | top as a fraction of H; `left`/`right` with a margin (fraction of W) |
-| radius | 0.008 | corner radius (fraction of W) |
+| maxWidth, maxHeight | 0.92, 0.84 | fractions of W and H the whole window (shell + recording) may take (studio's fill framing: a strip for one caption line under it) |
+| top, align, margin | 0.036, `center`, 0.05 | top as a fraction of H; `left`/`right` with a margin (fraction of W) |
+| radius | 0.0115 | corner radius (fraction of W) |
 | fill | `#fff` | colour behind the recording |
 | shadow | `0 0 0 1px rgba(0,0,0,0.06),0 24px 70px rgba(0,0,0,0.22)` | any CSS box-shadow list |
 | shadowPad | 130 | px kept around the shell for the shadow |
@@ -166,7 +166,9 @@ rounded corners (top corners square when there is a top inset).
 ### caption
 `variant`: `pill` | `glass` | `plain` | `bar` | `mono`.
 `placement`: `under` (band below the window), `overlay` (inside, at the bottom), `slot` (the shell's bottom inset strip; it rides with the window's tilt).
-`align`: `center` | `left`. `size` (0.0135 W), `offset` (0.05 H bottom gap when there is no band), `inset` (0.03 H overlay gap).
+`align`: `center` | `left`. `size` (0.0177 W), `offset` (0.05 H bottom gap when there is no band), `inset` (0.03 H overlay gap),
+`top` (0.05 H: the top edge of a caption that moved up because the action is under its bottom spot; see camera),
+`tagContrast` (4.5: tag colours and the emphasis colour on a pill, glass or bar plate are lifted until they hold this against the plate over white; `null` keeps them as given).
 `color` `#fff`, `weight` 500, `textShadow` (bar, mono), `maxWidth` (a fraction of W; null keeps one line, a number makes every variant wrap inside that width, and a typed caption follows its lines).
 `scrim`: `{ height: 0.3, color: '#000', opacity: 0.6 }` a soft gradient up from the bottom of the recording (height is a fraction of the recording's height), drawn behind overlay captions and captions on a full-bleed recording; it fades in with the first caption of the scene and out with the last, and rides with the window group.
 Variant tokens: `pill { gap, padY, padX, radius, background, shadow, border }`, `glass { blur, tint, saturate, border, radius, shadow }`
@@ -195,6 +197,16 @@ the `...Sec` tokens are the same timings in seconds, null by default, and win wh
 The ticks are on the **output frame count** (every multiple of `step` frames), not on each scene's own start: two scenes in a transition, the transition's steps (`stepped`), pose sequences, the callout marks and, with `post.grainClock: 'pose'`, the grain all change on the same frames. A scene begins on its first tick, so its first pose may be held up to one pose long.
 
 ### camera
+`mode`: `fill` | `inside`. **Not inherited through `extends`**: a style that does not say `fill` frames inside. `fill` (studio, midnight):
+on flat clip and image scenes the zoom moves the whole window group (shell, shadow, recording, ring, callouts, but not the captions)
+through `fillTransform` (motion.js), screen = T + z p: it grows about the canvas centre while the focus slides toward the centre in
+step with `fill` (0 at rest, 1 once the recording covers the canvas), then each axis is clamped (no background on a side the
+recording covers, inside the canvas on a side it does not). The corners square off as the first side reaches the edge and the ring
+fades with them; tilt and jitter fade as it fills; the logo is gone by fill 0.35. A caption with no plate gets a screen-space scrim
+(`caption.scrim`, else black or white against the text) once fill passes about 0.5. `inside`: the zoom crops inside a fixed window
+(the original behaviour). A spec overrides it with `"camera"` at the top or on a clip or image scene. Captions that can sit over the
+recording (fill, `frame: "full"`, `placement: "overlay"`) are placed once per caption in Node (`captionPlacements`, layout.js): at the
+top when the bottom spot would be on or within 6% of the action for more than 0.2 s.
 `ease`: `{ type: 'bezier', curve: [0.65,0,0.35,1] }` (today) or `{ type: 'spring', stiffness: 320, damping: 40, mass: 0.92 }` (overdamped: no overshoot; the spring's step response is stretched so it has settled when the keyframe's `atSec` arrives). `motionBlur`: `{ shutter: 0.5, samples: 6 }` averages camera poses between a moment ago and now (only while the camera moves; the cost is the window pass times `samples`).
 
 ### transition

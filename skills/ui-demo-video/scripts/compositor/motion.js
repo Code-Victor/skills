@@ -180,3 +180,34 @@ export const cameraTransform = (cam, w, h) => {
     ty: Math.min(0, Math.max(h - h * z, h / 2 - cam.y * h * z)),
   };
 };
+
+/**
+ * The camera in fill mode (Cap, Screen Studio): the zoom grows the WHOLE window over a fixed
+ * background instead of cropping inside it. A point p of the window at rest lands on the screen at
+ * (tx, ty) + z * p. `view` is the recording's rectangle at rest, W x H the canvas.
+ *
+ * The window grows about the canvas centre while the camera's focus slides toward the centre in step
+ * with `fill` (0 at rest, 1 from the zoom at which the recording covers the canvas), so the transform
+ * is the identity at zoom 1 and continuous everywhere. Then each axis is clamped: where the scaled
+ * recording is larger than the canvas no background shows on that side, where it is smaller it stays
+ * inside (the two limits meet at the zoom where that side reaches the edge, so nothing jumps there).
+ * `round` scales the corner radius: 1 at rest, easing to 0 as the first side reaches the canvas edge,
+ * so a rounded corner never opens a notch of background at the frame's edge.
+ */
+export const fillTransform = (cam, view, W, H) => {
+  const z = Math.max(1, cam.zoom ?? 1);
+  const cover = Math.max(W / view.w, H / view.h), first = Math.min(W / view.w, H / view.h);
+  const fill = cover > 1 ? Math.min(1, (z - 1) / (cover - 1)) : 1;
+  const edge = first > 1 ? Math.min(1, (z - 1) / (first - 1)) : 1;
+  const axis = (lo, size, C, focus) => {
+    const t = (C / 2) * (1 - z) + fill * z * (C / 2 - focus);
+    const a = -z * lo, b = C - z * (lo + size);   // inside: [a, b]; covering: [b, a]
+    return Math.min(Math.max(a, b), Math.max(Math.min(a, b), t));
+  };
+  const s = Math.min(1, Math.max(0, edge * 2 - 1));
+  return {
+    z, fill, round: 1 - s * s * (3 - 2 * s),
+    tx: axis(view.left, view.w, W, view.left + (cam.x ?? 0.5) * view.w),
+    ty: axis(view.top, view.h, H, view.top + (cam.y ?? 0.5) * view.h),
+  };
+};
