@@ -14,7 +14,7 @@
 //            background never pulses.
 
 import { Easing, bezier, cameraAt, cameraTransform, fillTransform, interpolate, makeCameraEase, seeded, spring } from './motion.js';
-import { ID, accentOf, cameraModeOf, calloutKind, chipKey, chipSide, effectOf, emChars, emWords, has, captionPos, markSize, placeOf, radiusOf, sceneLayout, shellTag, splitBoxes, tagColorOf } from './layout.js';
+import { ID, accentOf, cameraModeOf, calloutKind, chipKey, chipSide, effectOf, emChars, emWords, has, captionPos, markScale, markSize, placeOf, radiusOf, sceneLayout, shellTag, splitBoxes, tagColorOf } from './layout.js';
 import { rgb01 } from './color.js';
 import { backgroundParams, backgroundProgram, transitionProgram } from './shaders.js';
 
@@ -481,7 +481,7 @@ export class Scenes {
         opacity: o, fillA: spot || hasMark ? 0 : K.fillAlpha, dimA: spot ? K.dimAlpha * o : 0, accent: ring, dim, dash: K.dash ?? 0, pxScale: k,
       }, topR);
       if (hasMark) {
-        const m = markSize(box, c, u, K.pad), id = ID.mark(Math.round(m.w * 2), Math.round(m.h * 2), kind);
+        const m = markSize(box, c, u, K.pad), ms = markScale(m, this.W, this.H), id = ID.mark(Math.round(m.w * ms), Math.round(m.h * ms), kind);
         if (this.has(id)) {
           const s = this.still(id), n = s.poses ?? 1, rate = style.motion.poseRate ?? this.clock?.poses ?? 10;
           const pose = Math.min(n - 1, Math.floor(Math.max(0, ql - from) / fps * rate));   // on the overlay clock, like everything else
@@ -522,7 +522,7 @@ export class Scenes {
     gl.scissor(bounds);
     if (A.mark === 'builder') {
       // the style's own mark (terminal's corner brackets), drawn the way the older path draws it
-      const K = style.callout, pad = K.pad * u / k, mk = markSize(box, c, u, K.pad), id = ID.mark(Math.round(mk.w * 2), Math.round(mk.h * 2), A.kind);
+      const K = style.callout, pad = K.pad * u / k, mk = markSize(box, c, u, K.pad), ms = markScale(mk, W, H), id = ID.mark(Math.round(mk.w * ms), Math.round(mk.h * ms), A.kind);
       if (this.has(id)) {
         const s0 = this.still(id), n = s0.poses ?? 1, rate = style.motion.poseRate ?? this.clock?.poses ?? 10;
         const pose = Math.min(n - 1, Math.floor(Math.max(0, ql - from) / fps * rate)), pid = this.has(`${id}@${pose}`) ? `${id}@${pose}` : id, ps = this.still(pid);

@@ -20,7 +20,7 @@
 //
 // All sizes are px at the video's width. For the default (studio) style the CSS
 // is a copy of what the Remotion template puts on screen.
-import { esc, has, ID, r2, richHtml, emChars, emWords, parseEmphasis, sceneLayout, splitBoxes, captionPos, accentOf, tagColorOf, radiusOf, sceneLabel, shellTag, markSize, effectOf, chipKey, placeOf, cameraModeOf, captionHasPlate, calloutKind, chipSide, isLegacyCallout } from './layout.js';
+import { esc, has, ID, r2, richHtml, emChars, emWords, parseEmphasis, sceneLayout, splitBoxes, captionPos, accentOf, tagColorOf, radiusOf, sceneLabel, shellTag, markSize, effectOf, chipKey, placeOf, cameraModeOf, captionHasPlate, calloutKind, chipSide, isLegacyCallout, markScale } from './layout.js';
 import { withAlpha, contrast, mix, ensureContrast } from './color.js';
 import { annotationJobs } from './annotate.js';
 
@@ -189,9 +189,9 @@ const calloutChip = (spec, style, label, c, scene, index, ci) => {
 const calloutMark = (spec, style, scene, c, kind) => {
   const lay = sceneLayout(spec, style, scene);
   if (!lay || !style.build?.calloutMark) return null;
-  const u = spec.width / 1920, m = markSize(lay.view, c, u, style.callout.pad);
-  const w = Math.round(m.w * 2), h = Math.round(m.h * 2), id = ID.mark(w, h, kind);
-  const out = style.build.calloutMark(ctxFor(spec, style, 'calloutMark', { callout: c, kind, w, h, box: { w, h }, scale: 2, id, pad: style.callout.pad * u * 2 }));
+  const u = spec.width / 1920, m = markSize(lay.view, c, u, style.callout.pad), sc = markScale(m, spec.width, spec.height);
+  const w = Math.round(m.w * sc), h = Math.round(m.h * sc), id = ID.mark(w, h, kind);
+  const out = style.build.calloutMark(ctxFor(spec, style, 'calloutMark', { callout: c, kind, w, h, box: { w, h }, scale: sc, id, pad: style.callout.pad * u * sc }));
   return job(id, `<div id="mark" data-p="mark" style="position:absolute;left:20px;top:20px;width:${w}px;height:${h}px">${out.html}</div>`, [{ ...shot(id, '#mark', { pad: 4 }), poses: out.poses?.mark ?? out.poses }], out.css);
 };
 

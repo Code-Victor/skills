@@ -497,7 +497,7 @@ export const annotationJobs = (spec, style, scene, index, ci, c, { kind, builder
 
   // ---- where the label goes: the first side (and lean) that keeps arrow and label inside what shows and off the mark, all the time it shows
   const hasLabel = has(c.label), arrowOn = hasLabel && c.arrow !== false;
-  const len = (AR.length ?? 80) * u, gap = (AR.gap ?? 7) * u, lgap = (LB.gap ?? 8) * u, margin = (LB.margin ?? 12) * u;
+  const len = (AR.length ?? 80) * u, gap = (AR.gap ?? 10) * u, lgap = (LB.gap ?? 8) * u, margin = (LB.margin ?? 12) * u;
   let place = null;
   if (hasLabel) {
     const est = labelEstimate(style, c.label, u, W), s0 = samples[0], cx = s0.r.x + s0.r.w / 2, cy = s0.r.y + s0.r.h / 2;

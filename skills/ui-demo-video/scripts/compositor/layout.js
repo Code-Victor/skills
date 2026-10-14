@@ -287,3 +287,5 @@ export const captionPlacements = (spec, style, scene, actions = []) => {
 
 /** Size of a callout mark's picture at camera zoom 1, in output px (it is captured at 2x). */
 export const markSize = (view, c, u, pad) => ({ w: c.box[2] * view.w + pad * 2 * u, h: c.box[3] * view.h + pad * 2 * u });
+/** The scale a style's callout mark is captured at: 2x, or less when 2x would not fit the capture page (a mark over most of the picture). */
+export const markScale = (m, W, H) => Math.min(2, (W - 48) / m.w, (H - 48) / m.h);

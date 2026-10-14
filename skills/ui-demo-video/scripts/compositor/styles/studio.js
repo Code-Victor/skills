@@ -114,7 +114,7 @@ export default {
     highlight: { color: null, alpha: null, lightness: 0.7 },   // a marker band laid on by multiplying (text under it keeps its contrast); alpha null: as strong as takes white down to `lightness` (relative luminance)
     brackets: ['left', 'right'],    // a bracket's sides when the callout gives none
     draw: { sec: 0.8, arrowSec: 0.28, labelSec: 0.22, exitSec: 0.2 },   // the mark draws on in `sec` (Rough Notation's 800 ms, ease-out per path), then the arrow, then the label; all fade out in exitSec
-    arrow: { width: 3.8, length: 80, gap: 7, head: 15, bow: 0.22 },    // u; gap: from the mark's edge to the arrow's tip; bow: how much the shaft curves (fraction of its length)
+    arrow: { width: 3.8, length: 80, gap: 10, head: 15, bow: 0.22 },   // u; gap: from the mark's edge to the arrow's tip; bow: how much the shaft curves (fraction of its length)
     label: {
       kind: 'note',                 // note: the label hangs from an arrow drawn to the mark (this system) | chip: the style's calloutChip next to the box
       font: 'hand', size: 40, weight: 700, italic: false, lineHeight: 1.08, tracking: 0,

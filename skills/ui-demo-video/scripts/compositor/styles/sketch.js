@@ -434,7 +434,7 @@ const poseSeq = (name, poseHtml, at, { rate = 10, holds = [], pad = 24, style = 
 export const lab = { INK, RED, OLIVE, OLIVE_TXT, PAPER, NOTE, FRAME, PAPER_CSS, CARD_GRAIN, inkImg, paperImg, scribbleCircle, inkArrow, underline, wobblyBox, tick, markerSlab, handLine, toChars, measure, wrapBalanced, rng, hashStr };
 
 // ------------------------------------------------------------------ builders
-const strokeW = (c) => c.u * 7.5 * 2;            // the pencil mark's peak width in the 2x callout capture (7.5 u at 1x)
+const strokeW = (c) => c.u * 7.5 * (c.scale ?? 2);   // the pencil mark's peak width in the callout capture (2x, less for a mark over most of the picture; 7.5 u at 1x)
 
 /* ---- the photo print: paper fibre and a hairline round the picture; a split's photos lie flat in prints drawn as furniture ---- */
 const windowBuilder = (c) => {
@@ -605,7 +605,7 @@ const markBuilder = (c) => {
   const kind = c.kind ?? callout.style ?? 'circle', circle = kind === 'circle' || kind === 'ring' || kind === 'spotlight';
   const brackets = callout.brackets ? [].concat(callout.brackets) : (c.style.callout.brackets ?? ['left', 'right']);
   const poseAt = (p) => (circle ? scribbleCircle({ w, h, width: sw, color: c.accent, progress: p, seed, margin: sw * 0.75, n: 2.5 })
-    : sketchMark(kind, { w, h, pad: c.pad ?? (c.style.callout.pad ?? 44) * c.u * 2, sw, color: c.accent, seed: `${seed}:${kind}`, brackets }, p));
+    : sketchMark(kind, { w, h, pad: c.pad ?? (c.style.callout.pad ?? 44) * c.u * (c.scale ?? 2), sw, color: c.accent, seed: `${seed}:${kind}`, brackets }, p));
   const poses = Array.from({ length: CIRCLE_POSES }, (_, k) => inkImg([0, 0, w, h], poseAt((k + 1) / CIRCLE_POSES)));
   // every pose is in the first HTML too (hidden), so each picture is decoded before the engine swaps the poses in
   return { html: `${poses[0]}<div style="position:absolute;left:0;top:0;opacity:0">${poses.slice(1).join('')}</div>`, poses };
