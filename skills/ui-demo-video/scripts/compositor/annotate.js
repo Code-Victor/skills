@@ -547,13 +547,18 @@ export const annotationJobs = (spec, style, scene, index, ci, c, { kind, builder
     label = { id, attach: place.U.attach, P: place.U.P, enter: LB.enter ?? 'fade', cps: LB.cps ?? 40, rise: (LB.rise ?? 5) * u, glass: LB.plate === 'glass' ? { radius: LB.radius ?? 14 } : null, fits: place.bad === 0 };
   }
 
-  const sec = D.sec ?? 0.8, arrowSec = arrow ? D.arrowSec ?? 0.28 : 0, arrowAt = arrow ? sec * 0.9 : sec;
+  // a short callout (auto-camera ends one just after the next click, 1.2 s at the least) draws faster, down to half speed,
+  // so the label is in by 40 % of its time and stays long enough to read
+  const forSec = c.forSec ?? K.forSec ?? 2.5, sec0 = D.sec ?? 0.8, arrowSec0 = arrow ? D.arrowSec ?? 0.28 : 0, labelSec0 = D.labelSec ?? 0.22;
+  const arrowAt0 = arrow ? sec0 * 0.9 : sec0, labelAt0 = arrow ? arrowAt0 + arrowSec0 * 0.5 : sec0 * 0.85, entrance = label ? labelAt0 + labelSec0 : sec0;
+  const k = Math.min(1, Math.max(0.5, (forSec * 0.4) / entrance));
+  const sec = sec0 * k, arrowSec = arrowSec0 * k, arrowAt = arrowAt0 * k;
   const side = place?.side ?? 'above';
   c._ann = {
     kind, res: RES, mark: builderMark ? 'builder' : 'levels', blend: hl ? 'multiply' : null, side,
     levels: levels.map((l) => ({ S: l.S, id: l.id, ox: l.ox, oy: l.oy, w: l.w, h: l.h, a: l.ext[side] + gap })),
     arrow, label,
-    timing: { sec, arrowAt, arrowSec, labelAt: arrow ? arrowAt + arrowSec * 0.5 : sec * 0.85, labelSec: D.labelSec ?? 0.22, exitSec: D.exitSec ?? 0.2 },
+    timing: { sec, arrowAt, arrowSec, labelAt: labelAt0 * k, labelSec: labelSec0 * k, exitSec: D.exitSec ?? 0.2 },
   };
   if (direct.length) jobs.unshift({ id: ID.ann(index, ci, 'pics'), direct });
   return jobs;
