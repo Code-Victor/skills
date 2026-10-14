@@ -191,13 +191,18 @@ const movesFor = (scene, ev, o, callouts) => {
     const inAt = Math.max(prevKey.atSec, s.start - o.lead);
     // Stay where we are until the move starts.
     if (!zoomedIn && inAt > prevKey.atSec) at({ atSec: inAt, ...pick(prevKey) });
-    let lastKey = null, holdEnd = s.holdEnd;
+    // lastAct: when the last action at the camera's spot happened (typing ends after it starts)
+    let lastKey = null, lastAct = -Infinity, holdEnd = s.holdEnd;
     const hold = (it, arrive) => {   // a result with a callout holds for the callout's time
       if (it.callouts.length) holdEnd = Math.max(holdEnd, arrive + o.minHold, ...it.callouts.map(calloutEnd));
     };
     for (const it of s.items) {
       // Actions in the same spot don't need a move of their own.
-      if (lastKey && dist(it, lastKey) < 0.04) { hold(it, it.t); continue; }
+      if (lastKey && dist(it, lastKey) < 0.04) {
+        if (ACTIONS.has(it.kind)) lastAct = Math.max(lastAct, it.t);
+        hold(it, it.t);
+        continue;
+      }
       if (lastKey && ACTIONS.has(lastKey.kind) && it.kind === 'mark') {
         // An action's result: frame both when they fit one view, else stay on
         // the action for `see` seconds, then move to the result.
@@ -209,11 +214,12 @@ const movesFor = (scene, ev, o, callouts) => {
           continue;
         }
         const pan = far(cause, it, s.zoom) ? o.farSec : 0.45;
-        const arrive = Math.max(keys.at(-1).atSec + o.see + pan, it.t);
+        const arrive = Math.max(Math.max(keys.at(-1).atSec, lastAct) + o.see + pan, it.t);
         if (arrive > s.limit) break;
         at({ atSec: arrive - pan, ...here(cause, s.zoom) });
         at({ atSec: arrive, ...here(it, s.zoom) });
         for (const c of it.callouts) timeCallout(c, arrive - CALLOUT_LEAD);
+        holdEnd = Math.max(holdEnd, arrive + o.hold * (it.callouts.length ? 0 : 1));
         hold(it, arrive);
         lastKey = it;
         continue;
@@ -227,6 +233,7 @@ const movesFor = (scene, ev, o, callouts) => {
       for (const c of it.callouts) timeCallout(c, arrive - CALLOUT_LEAD);
       hold(it, arrive);
       lastKey = it;
+      lastAct = ACTIONS.has(it.kind) ? it.t : -Infinity;
     }
     holdEnd = Math.min(s.limit, holdEnd);
     const cut = s.nextBreak !== undefined && holdEnd >= s.nextBreak - 0.05 - 1e-9;
