@@ -17,7 +17,7 @@ about it and a line about what it suits (`--json` for data).
 | Style | The idea | Right choice when | Cost |
 |---|---|---|---|
 | `studio` | The original: a soft light gradient, a white window, dark pill captions | You are unsure, or the video goes into Slack, a PR or docs. Your own `theme` colours apply | The safe default, so the least distinctive |
-| `midnight` | Depth and light: a near-black stage with a slow pool of blue-violet light, glass captions | Launches, dark-mode products, anything that should feel premium | A light app is a bright slab on a dark stage; pacing is slower (0.7 s transitions) |
+| `midnight` | Depth and light: a near-black stage with a slow pool of cool grey light, glass captions | Launches, dark-mode products, anything that should feel premium | A light app is a bright slab on a dark stage; pacing is slower (0.7 s transitions) |
 | `editorial` | Type and stillness: warm paper, ink, hairline rules, a serif, margin notes | Changelogs, weekly updates, writing-led explanations | The least showy. The recording is smaller (at most 74% of the width) to leave room for the margin note |
 | `terminal` | A terminal session about the change: mono type, typed text, stepped motion | Developer tools, pull-request demos for engineers | Reads as cold for a consumer product. Typed text needs time to finish |
 | `sketch` | A photo pinned to paper, annotated by hand, moving in held poses | Bug-fix before and afters, where circling the bug by hand says it fastest | Playful, so wrong for a formal audience. Typed captions are slow; very long ones are cut short |
@@ -57,7 +57,7 @@ apply. Defaults are a blue accent, red for `Before` and blue for `After`.
 
 ## midnight
 
-What the viewer sees: a near-black ground with one slow pool of blue-violet
+What the viewer sees: a near-black ground with one slow pool of cool grey
 light behind the window, a little film grain and a soft vignette. The window
 is dark-filled with a gradient hairline and a faint cool glow, and drifts in
 about 3% over each scene so no frame is still. Captions are dark glass under

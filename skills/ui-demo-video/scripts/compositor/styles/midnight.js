@@ -1,6 +1,6 @@
 // midnight: depth and light. A dark stage with one lit object on it: the recording
 // is the only bright thing, everything else recedes. Near-black ground with a very
-// slow muted blue-violet mesh that pools softly behind the window (never a stripe,
+// slow muted graphite mesh that pools softly behind the window (never a stripe,
 // never a blob), a dark-glass card and caption, a big tight Geist title that
 // resolves out of blur, a quiet Geist Mono subtitle, a spring camera that never
 // overshoots, and slow transitions. One accent (a cool pale blue), sentence case,
@@ -14,7 +14,7 @@
 import { stripEmphasis, emChars } from '../layout.js';
 import { titleSpans } from '../plan.js';
 
-const ACCENT = '#9bc8dd';       // remocn's release-teaser accent: a desaturated sky blue (L 0.82, C 0.06): it reads as cool white next to the blue-violet greys and never fights the app's own colours
+const ACCENT = '#9bc8dd';       // remocn's release-teaser accent: a desaturated sky blue (L 0.82, C 0.06): it reads as cool white next to the graphite greys and never fights the app's own colours
 const FG = '#f1f3f8';           // off-white with a hair of blue: pure white on near-black is harsh on video
 const GROUND = '#050709';
 
@@ -23,7 +23,7 @@ const MONO_TRACK = '0.01em';
 
 // ---- background -----------------------------------------------------------
 // Own GLSL: a domain-warped, rotated value-noise field (3 octaves) read through the
-// four-step blue-violet ramp, multiplied by an elliptical gaussian pool behind where
+// four-step graphite ramp (cool greys on the accent's hue, never violet), multiplied by an elliptical gaussian pool behind where
 // the window sits. The pool is the radial scrim: light in the middle, falling to the
 // ground at the edges, so there is nothing to see as a band. uP: 0 level (how far up
 // the ramp the brightest point climbs), 1 drift (noise units a second).
@@ -125,7 +125,7 @@ const build = {
 export default {
   name: 'midnight',
   extends: 'studio',
-  description: 'Depth and light: a near-black stage, a slow blue-violet pool of light, a glass card and caption, one pale-blue accent.',
+  description: 'Depth and light: a near-black stage, a slow pool of cool grey light, a glass card and caption, one pale-blue accent.',
   suits: 'Launches, dark-mode products and anything that should feel calm and expensive.',
 
   palette: {
@@ -155,7 +155,7 @@ export default {
     model: 'shared',                                    // one background per frame; transitions pass through it, never through white
     background: {
       kind: 'shader', glsl: BACKGROUND_GLSL,
-      colors: [GROUND, '#12121a', '#232338', '#3a3a5c', '#52527a'],   // remocn premium backdrop
+      colors: [GROUND, '#0e1215', '#1a2026', '#283139', '#384650'],   // remocn's premium backdrop, moved off violet: graphite on the accent's hue (oklch ~230), chroma under 0.03
       params: [0.55, 0.045],                             // level, drift (noise units a second)
     },
   },
@@ -167,7 +167,7 @@ export default {
     fill: '#0b0c10',
     // lifted off the ground by offset and negative spread, no wide halo of black
     shadow: '0 50px 100px -24px rgba(0,0,0,0.7),0 18px 36px -14px rgba(0,0,0,0.5)',
-    glow: { color: 'rgba(140,165,230,0.085)', blur: 220, spread: 12 },   // the screen lighting the room: wide, cool, under 12 % alpha
+    glow: { color: 'rgba(155,200,221,0.07)', blur: 220, spread: 12 },    // the screen lighting the room: wide, the accent's hue, under 12 % alpha
     shadowPad: 320,
     border: { width: 1, gradient: 'linear-gradient(180deg, rgba(255,255,255,0.2), rgba(255,255,255,0.03) 50%, rgba(255,255,255,0))' },
     highlight: { color: 'rgba(255,255,255,0.14)' },
@@ -191,7 +191,7 @@ export default {
     quoteBar: 3, shadowPad: 300, rowEnter: 'blur',
   },
   list: { width: 1240, gap: 46, titleSize: 88, subtitleSize: 28, subtitleOpacity: 0.62, itemSize: 44, iconSize: 40, itemEnter: 'blur' },
-  callout: { ringWidth: 3.5, fillAlpha: 0.08, dimAlpha: 0.6, dimColor: '#030409', chip: { size: 24, weight: 600, padY: 8, padX: 16, radius: 999, background: 'rgba(8,9,12,0.92)', color: ACCENT } },
+  callout: { ringWidth: 3.5, fillAlpha: 0.08, dimAlpha: 0.6, dimColor: '#030409', chip: { size: 24, weight: 600, padY: 8, padX: 16, radius: 999, background: null, color: null } },   // a filled accent chip like the lit After tag: one accent, whatever the spec brings
 
   motion: {
     card: { rise: 12, rows: [0.3, 0.55, 0.8], alpha: [1, 0.9, 0.74] },
