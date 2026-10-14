@@ -33,12 +33,19 @@ export const deepMerge = (a, b) => {
   return out;
 };
 
-/** A style with its `extends` chain folded in (child wins). */
+/**
+ * A style with its `extends` chain folded in (child wins). One token is not passed on: `camera.mode`.
+ * How the camera frames the recording (fill: the window grows until the recording fills the frame;
+ * inside: the zoom crops inside a fixed window) is part of a style's identity, so a style that does
+ * not say `camera: { mode: 'fill' }` itself frames inside, whatever it extends.
+ */
 export const flatten = (name, seen = []) => {
   const s = STYLES[name];
   if (!s) throw new Error(unknownStyleMessage(name));
   if (seen.includes(name)) throw new Error(`style "${name}" extends itself (${[...seen, name].join(' -> ')})`);
-  return s.extends ? deepMerge(flatten(s.extends, [...seen, name]), s) : s;
+  if (!s.extends) return s;
+  const parent = flatten(s.extends, [...seen, name]);
+  return deepMerge({ ...parent, camera: { ...parent.camera, mode: 'inside' } }, s);
 };
 
 /** What a spec asked for: { preset, overrides }. */
@@ -88,12 +95,29 @@ export const resolveStyle = (spec, flagStyle) => {
     }
   }
   if (s.canvas.background.kind !== 'css' && s.canvas.model === 'scene') s.canvas.model = 'shared';
+  s.camera = { ...s.camera, mode: s.camera?.mode === 'fill' ? 'fill' : 'inside' };
+  // caption.tagContrast: lift each tag colour until it holds that contrast on the caption's plate
+  // composited over white (the lightest thing a plate can sit on; over black a dark plate only gets darker).
+  const plate = captionPlate(s);
+  if (s.caption.tagContrast && plate) {
+    const lift = (c) => ensureContrast(c, plate, s.caption.tagContrast, s.rgb ?? {});
+    s.captionTags = { colors: Object.fromEntries(Object.entries(s.palette.tagColors ?? {}).map(([k, v]) => [k, lift(v)])), fallback: lift(s.palette.tagFallback), accent: lift(s.palette.accent) };   // accent: an *emphasised* word in a caption
+  }
   if (s.post.dither > 0 || s.post.grain > 0 || s.post.vignette > 0 || s.caption.variant === 'glass') s.needsMain = true;
   s.name = preset;
   s.builders = Object.keys(s.build ?? {});
   s.hash = crypto.createHash('sha1').update(JSON.stringify(s, fnKey)).digest('hex').slice(0, 8);
   Object.defineProperty(s, 'notes', { value: notes, enumerable: false });
   return s;
+};
+
+/** A dark caption plate's colour over white (pill background or glass tint), as #rrggbb; null when the caption has no plate or it cannot be read. */
+export const captionPlate = (s) => {
+  const k = s.caption, css = k.variant === 'pill' ? k.pill?.background : k.variant === 'glass' ? k.glass?.tint : k.variant === 'bar' ? k.bar?.background : null;
+  const c = css ? parseColor(css) ?? s.rgb?.[css] : null;
+  if (!c) return null;
+  const a = c[3] ?? 1, hx = (v) => Math.round(v * a + 255 * (1 - a)).toString(16).padStart(2, '0');
+  return `#${hx(c[0])}${hx(c[1])}${hx(c[2])}`;
 };
 
 /** Every colour string in the style that the GPU needs as numbers (resolved by Chrome when the local parser cannot read it). */

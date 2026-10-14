@@ -35,7 +35,7 @@ import { fileURLToPath } from 'node:url';
 import { jobsFor, baseCss } from './compositor/plan.js';
 import { listStyles, resolveStyle, colorStrings, serialisable } from './compositor/styles/index.js';
 import { parseColor } from './compositor/color.js';
-import { setStyleHash } from './compositor/layout.js';
+import { captionPlacements, modeOf, setStyleHash } from './compositor/layout.js';
 import { NATURAL_SEC, TRANSITIONS, resolveGap, sceneSpans, totalFrames } from './compositor/timeline.js';
 
 const T0 = Date.now();
@@ -166,6 +166,10 @@ const ALL_TRANSITIONS = [...TRANSITIONS, ...Object.keys(style.transition.custom 
 const checkTransition = (t, where) => { const type = typeof t === 'string' ? t : t?.type; if (!ALL_TRANSITIONS.includes(type)) fail(`${where}: unknown transition "${type}" (expected one of ${ALL_TRANSITIONS.join(', ')})`); };
 checkTransition(spec.transition, 'transition');
 (spec.transitions ?? []).forEach((t, i) => t && checkTransition(t, `transitions[${i}]`));
+// "camera": "fill" | "inside" (or { "mode": ... }), on the spec or on a clip or image scene
+const checkCamera = (v, where) => { if (v !== undefined && !modeOf(v)) fail(`${where}: camera must be "fill" or "inside" (or { "mode": "fill" })`); };
+checkCamera(spec.camera, 'camera');
+spec.scenes.forEach((s, i) => checkCamera(s.camera, `scene ${i}`));
 
 const W = spec.width, H = spec.height, FPS = spec.fps;
 const N = totalFrames(spec, FPS);
@@ -312,6 +316,21 @@ spec.scenes.forEach((s, i) => {
   if (s.type === 'clip' && !s.aspect) { const c = clips.get(s.src).info; s.aspect = c.width / c.height; }
   if (s.type === 'split' && !s.aspect) { const c = clips.get(s.before.src).info; s.aspect = c.width / c.height; }
   if (s.type === 'image' && !s.aspect) s.aspect = 16 / 9;
+});
+// Where each caption sits (bottom, or top when the action is under it), decided once per caption from the
+// camera, the callouts and the take's own clicks and typing (clips/<take>.mp4.events.json, when it is there).
+const takeActions = (s) => {
+  const file = s.type === 'clip' ? `${clips.get(s.src)?.original}.events.json` : null;
+  if (!file || !fs.existsSync(file)) return [];
+  let ev;
+  try { ev = JSON.parse(fs.readFileSync(file, 'utf8')).events ?? []; } catch { return []; }
+  const trim = s.trimStartSec ?? 0, rate = s.playbackRate ?? 1;
+  return ev.filter((e) => /^(click|type-start|type-end|key)$/.test(e.type) && Number.isFinite(e.t) && (e.box || Number.isFinite(e.x)))
+    .map((e) => ({ t0: (e.t - trim) / rate - 0.3, t1: (e.t - trim) / rate + 1, box: e.box ?? [e.x, e.y, 0, 0] }));
+};
+spec.scenes.forEach((s, i) => {
+  for (const c of captionPlacements(spec, style, s, takeActions(s)) ?? [])
+    if (c.place === 'top') note(`scene ${i}: caption "${String(c.text).slice(0, 40)}" sits at the top (the action is under its bottom spot from ${c.from} s to ${c.to} s)`);
 });
 
 // ------------------------------------------------------------ fonts

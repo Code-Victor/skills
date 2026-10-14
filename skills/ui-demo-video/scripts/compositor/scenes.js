@@ -13,8 +13,8 @@
 //            background, so a dark style never flashes white and an animated
 //            background never pulses.
 
-import { Easing, bezier, cameraAt, cameraTransform, interpolate, makeCameraEase, seeded, spring } from './motion.js';
-import { ID, accentOf, chipKey, effectOf, emChars, emWords, has, captionPos, markSize, radiusOf, sceneLayout, shellTag, splitBoxes, tagColorOf } from './layout.js';
+import { Easing, bezier, cameraAt, cameraTransform, fillTransform, interpolate, makeCameraEase, seeded, spring } from './motion.js';
+import { ID, accentOf, cameraModeOf, chipKey, effectOf, emChars, emWords, has, captionPos, markSize, placeOf, radiusOf, sceneLayout, shellTag, splitBoxes, tagColorOf } from './layout.js';
 import { rgb01 } from './color.js';
 import { backgroundParams, backgroundProgram, transitionProgram } from './shaders.js';
 
@@ -281,6 +281,7 @@ export class Scenes {
       const dy = K.enter === 'fade' || K.enter === 'rise' ? (1 - enter) * size * K.rise : 0, op = o * exit;
       if (op > 0.001) this.glass({ x: s.bx, y: s.by + dy, w: s.bw, h: s.bh }, K.glass, op);
     }
+    if (this.fillScrim > 0.001 && this.has(ID.fillScrim()) && this.has(id)) this.fillScrimFor(this.still(id), pos, enter * exit * this.fillScrim);
     const kind = K.enter;
     const t = (lf - delay) / this.fps, prevT = this.poseT;
     this.poseT = Math.max(0, t);   // a caption's pose sequence runs from its own start
@@ -290,15 +291,28 @@ export class Scenes {
     this.poseT = prevT;
   }
   captions(scene, local) {
-    const total = Math.round(scene.durationSec * this.fps), pos = captionPos(this.spec, this.style, scene), ql = this.ql;
+    const total = Math.round(scene.durationSec * this.fps), ql = this.ql;
+    const posOf = (cap) => captionPos(this.spec, this.style, scene, placeOf(scene, cap));   // bottom, or top when the action is under it (decided once per caption, in Node)
     if (scene.type === 'clip' && scene.captions?.length) {
       const sorted = [...scene.captions].sort((a, b) => a.atSec - b.atSec);
       sorted.forEach((c, i) => {
         const from = Math.round(c.atSec * this.fps);
         const to = i + 1 < sorted.length ? Math.round(sorted[i + 1].atSec * this.fps) : total;
-        if (local >= from && local < Math.max(from + 1, to)) this.caption(scene, pos, c.tag ?? scene.tag, c.text, ql - from, Math.max(1, to - from));
+        if (local >= from && local < Math.max(from + 1, to)) this.caption(scene, posOf(c), c.tag ?? scene.tag, c.text, ql - from, Math.max(1, to - from));
       });
-    } else if (scene.caption) this.caption(scene, pos, scene.tag, scene.caption, ql, total);
+    } else if (scene.caption) this.caption(scene, posOf(null), scene.tag, scene.caption, ql, total);
+  }
+  /**
+   * Fill mode, a caption with no plate: a soft gradient from the nearer edge of the frame, behind the caption
+   * `s` (its captured picture), at `opacity`. It comes in as the recording covers the caption's spot.
+   */
+  fillScrimFor(s, pos, opacity) {
+    const { W, H } = this, g = this.still(ID.fillScrim()), prev = this.gl.xf;
+    const top = pos.top !== null && pos.bottom === null && pos.top < H / 2;
+    const h = Math.min(H, Math.max(g.h, (top ? s.by + s.bh : H - s.by) * 1.6));
+    this.gl.setXf(null);
+    this.gl.quad(g.tex, { x: 0, y: top ? 0 : H - h, w: W, h }, { opacity, fbo: top });   // fbo flips it: dark at the top edge
+    this.gl.setXf(prev);
   }
 
   /** Captions, through the window group's tilt/drift when they sit in the shell's own slot. */
@@ -335,8 +349,8 @@ export class Scenes {
     const off = [(tex.w - view.w / sc) / 2, (tex.h - view.h / sc) / 2];
     return { cam, sc, pp, off };
   }
-  /** The window group's affine: scene-long drift, a small constant tilt, and the quantised clock's per-pose shake. */
-  windowXf(scene, local, outer) {
+  /** The window group's affine: scene-long drift, a small constant tilt, and the quantised clock's per-pose shake (`shake` scales tilt and shake: fill mode fades them as the window covers the frame). */
+  windowXf(scene, local, outer, shake = 1) {
     const w = this.style.window, ck = this.clock;
     if (!w.drift && !w.tilt && !w.tiltJitter && !(ck && w.jitter)) return null;
     const total = Math.max(1, Math.round(scene.durationSec * this.fps));
@@ -346,6 +360,7 @@ export class Scenes {
     if (w.tiltJitter) rot += (seeded(ck?.seed ?? 1, this.index, 77)() * 2 - 1) * w.tiltJitter * deg;
     let dx = 0, dy = 0;
     if (ck && w.jitter) { const r = seeded(ck.seed ?? 1, this.index, 91, this.pose); dx = (r() * 2 - 1) * ck.jitterPx * this.u; dy = (r() * 2 - 1) * ck.jitterPx * this.u; rot += (r() * 2 - 1) * ck.jitterDeg * deg; }
+    if (shake !== 1) { rot *= shake; dx *= shake; dy *= shake; }
     if (rot) m = mul(about(outer.left + outer.w / 2, outer.top + outer.h / 2, rot), m);
     if (dx || dy) m = mul({ ...I, tx: dx, ty: dy }, m);
     return m;
@@ -356,6 +371,7 @@ export class Scenes {
    * Draws shell, window, ring, callouts.
    */
   recording(scene, local, tex, mode) {
+    if (mode !== 'full' && cameraModeOf(this.spec, this.style, scene) === 'fill') return this.filled(scene, local, tex);
     const { gl, spec, style, W } = this, lay = sceneLayout(spec, style, scene), full = mode === 'full';
     const view = lay.view, win = snap(view), radius = full ? 0 : radiusOf(style, W);
     const topR = lay.ins.t > 0 ? 0 : radius, botR = lay.ins.b > 0 ? 0 : radius;
@@ -381,6 +397,44 @@ export class Scenes {
     this.groupXf = xf ? (prevXf ? mul(prevXf, xf) : xf) : null;   // captions placed in the shell's own slot ride with it
     gl.setXf(prevXf);
   }
+  /**
+   * Fill mode: the camera does not crop inside the window, it moves the WHOLE window (shell and its shadow,
+   * the recording, the ring, the callouts) through fillTransform over the fixed background: the window grows
+   * until the recording fills the frame. Radius and shadow grow with it; the corners square off as the first
+   * side reaches the frame's edge and the ring fades with them, so no background shows at a covered edge.
+   */
+  filled(scene, local, tex) {
+    const { gl, spec, style, W, H } = this, lay = sceneLayout(spec, style, scene), view = lay.view, win = snap(view), R = radiusOf(style, W);
+    const pose = (f) => fillTransform(cameraAt(scene.moves, f, this.fps, this.camEase), view, W, H);
+    const F = pose(local);
+    this.fillNow = F.fill;
+    const sc = Math.max(view.w / tex.w, view.h / tex.h), pp = 1 / sc;
+    const origin = [(tex.w - view.w / sc) / 2 + (win.x - view.left) * pp, (tex.h - view.h / sc) / 2 + (win.y - view.top) * pp];
+    // camera motion blur: the screen pixel's source under the camera a moment ago, as one more affine of the window pixel
+    let prev = null;
+    const mb = style.camera.motionBlur;
+    if (mb) {
+      const P = pose(local - (mb.shutter ?? 0.5));
+      const move = Math.max(...[view.left, view.left + view.w].map((x) => Math.abs(F.tx - P.tx + (F.z - P.z) * x)), ...[view.top, view.top + view.h].map((y) => Math.abs(F.ty - P.ty + (F.z - P.z) * y)));
+      if (move > 0.4) prev = {
+        origin: [origin[0] + ((F.tx - P.tx + F.z * win.x) / P.z - win.x) * pp, origin[1] + ((F.ty - P.ty + F.z * win.y) / P.z - win.y) * pp],
+        perPx: [pp * F.z / P.z, pp * F.z / P.z], n: Math.min(mb.samples ?? 6, 12, Math.max(2, Math.ceil(move / 1.5))),
+      };
+    }
+    const Fm = { a: F.z, b: 0, c: 0, d: F.z, tx: F.tx, ty: F.ty };
+    const outer = { left: F.tx + F.z * lay.outer.left, top: F.ty + F.z * lay.outer.top, w: F.z * lay.outer.w, h: F.z * lay.outer.h };
+    const wx = this.windowXf(scene, local, outer, 1 - F.fill), X = wx ? mul(wx, Fm) : Fm, prevXf = gl.xf;
+    gl.setXf(prevXf ? mul(prevXf, X) : X);
+    const sid = ID.shell(lay.outer, R, true, shellTag(style, scene));
+    gl.quad(this.still(sid).tex, this.rectOf(sid));
+    const r = R * F.round, topR = lay.ins.t > 0 ? 0 : r, botR = lay.ins.b > 0 ? 0 : r;
+    gl.window(tex, win, botR, origin, [pp, pp], 1, { topR, prev, pxScale: F.z });
+    this.scrim(scene, lay);
+    if ((style.window.border || style.window.highlight) && F.round > 0.001) { const rid = ID.ring(lay.outer, R); gl.quad(this.still(rid).tex, this.rectOf(rid), { opacity: F.round }); }
+    this.callouts(scene, local, view, win, botR, topR, { z: 1, tx: 0, ty: 0 }, F.z);
+    this.groupXf = wx ? (prevXf ? mul(prevXf, wx) : wx) : null;   // a caption in the shell's slot keeps the group's tilt but not the zoom: it stays put and readable
+    gl.setXf(prevXf);
+  }
   /** The soft gradient behind overlay captions (caption.scrim), fading in with the first caption and out with the last. */
   scrim(scene, lay) {
     const K = this.style.caption.scrim, C = this.style.caption;
@@ -404,8 +458,9 @@ export class Scenes {
     return { x, y, w: Math.max(...xs) - x + 2, h: Math.max(...ys) - y + 2 };
   }
 
-  callouts(scene, local, box, win, winR, topR, cam) {
-    const { gl, fps, u, style } = this, K = style.callout, accent = style.palette.accent, ql = this.ql;
+  /** `k`: screen px per window px when the whole window is drawn scaled (fill mode); pad, ring, radius and label keep their screen size. */
+  callouts(scene, local, box, win, winR, topR, cam, k = 1) {
+    const { gl, fps, u, style } = this, K = style.callout, accent = style.palette.accent, ql = this.ql, q = 1 / k;
     const ring = this.rgb(K.ringColor ?? accent), dim = this.rgb(K.dimColor), hasMark = style.builders?.includes('calloutMark');
     for (const [ci, c] of (scene.callouts ?? []).entries()) {
       if (!c.box || c.atSec === undefined) continue;
@@ -414,14 +469,14 @@ export class Scenes {
       const enter = spring({ frame: ql - from, fps, config: this.SPRING, durationInFrames: Math.round(K.enterSec * fps) });
       const exit = interpolate(ql, [to - Math.round(K.exitSec * fps), to], [1, 0]);
       const o = enter * exit;
-      const [x, y, bw, bh] = c.box, z = cam.z, pad = K.pad * u;
+      const [x, y, bw, bh] = c.box, z = cam.z, pad = K.pad * u * q;
       const left = box.left + cam.tx + x * box.w * z - pad, top = box.top + cam.ty + y * box.h * z - pad;
       const bwid = bw * box.w * z + pad * 2, bhgt = bh * box.h * z + pad * 2;
       const sc = K.scaleIn + (1 - K.scaleIn) * enter, spot = c.style === 'spotlight';
       gl.scissor(this.bounds(win));
       gl.callout(win, winR, {
-        cx: left + bwid / 2, cy: top + bhgt / 2, hw: (bwid / 2) * sc, hh: (bhgt / 2) * sc, radius: K.radius * u * sc, ring: hasMark ? 0 : K.ringWidth * u * sc,
-        opacity: o, fillA: spot || hasMark ? 0 : K.fillAlpha, dimA: spot ? K.dimAlpha * o : 0, accent: ring, dim, dash: K.dash ?? 0,
+        cx: left + bwid / 2, cy: top + bhgt / 2, hw: (bwid / 2) * sc, hh: (bhgt / 2) * sc, radius: K.radius * u * sc * q, ring: hasMark ? 0 : K.ringWidth * u * sc * q,
+        opacity: o, fillA: spot || hasMark ? 0 : K.fillAlpha, dimA: spot ? K.dimAlpha * o : 0, accent: ring, dim, dash: K.dash ?? 0, pxScale: k,
       }, topR);
       if (hasMark) {
         const m = markSize(box, c, u, K.pad), id = ID.mark(Math.round(m.w * 2), Math.round(m.h * 2), c.style ?? 'ring');
@@ -435,9 +490,9 @@ export class Scenes {
       }
       if (c.label) {
         const below = y < 0.18, s = this.still(ID.chip(c.label, accent, chipKey(style, this.index, ci, below ? 'below' : 'above')));
-        const cw = s.bw, ch = s.bh;
-        const cy = (below ? top + bhgt + 10 * u : top - 10 * u - ch) + (1 - enter) * 6 * u * (below ? -1 : 1);
-        gl.quad(s.tex, { x: left - (s.bx - s.x), y: cy - (s.by - s.y), w: s.w, h: s.h }, { opacity: o });
+        const ch = s.bh * q;
+        const cy = (below ? top + bhgt + 10 * u * q : top - 10 * u * q - ch) + (1 - enter) * 6 * u * q * (below ? -1 : 1);
+        gl.quad(s.tex, { x: left - (s.bx - s.x) * q, y: cy - (s.by - s.y) * q, w: s.w * q, h: s.h * q }, { opacity: o });
       }
       gl.scissor(null);
     }
@@ -453,17 +508,24 @@ export class Scenes {
     const mode = scene.frame === 'stage' ? 'flat' : scene.frame ?? 'flat';
     if (!this.shared) this.background();
     this.furniture(this.index);
+    this.fillNow = 0;
     this.recording(scene, local, frames.main, mode);
+    this.fillScrim = this.fillScrimLevel();
     this.slotCaptions(scene, local);
   }
   image(scene, local, frames) {
     if (!this.shared) this.background();
     this.furniture(this.index);
+    this.fillNow = 0;
     this.recording(scene, local, frames.main, 'flat');
+    this.fillScrim = this.fillScrimLevel();
     this.slotCaptions(scene, local);
   }
+  /** Fill mode: how much of the scrim behind a plateless caption shows (none at rest, all once the recording covers more than about half the way). */
+  fillScrimLevel() { const t = clamp01((this.fillNow - 0.35) / 0.3); return t * t * (3 - 2 * t); }
   split(scene, local, frames) {
     const { gl, W, H, fps, style } = this, boxes = splitBoxes(style, W, H, scene.aspect), ql = this.ql, R = radiusOf(style, W), M = style.motion.split;
+    this.fillScrim = 0;
     if (!this.shared) this.background();
     this.furniture(this.index);
     const labels = [scene.before.label ?? 'Before', scene.after.label ?? 'After'];
@@ -712,6 +774,10 @@ export class Scenes {
     const m = this.rgb(style.canvas.matte);
     gl.clear(m[0], m[1], m[2], 1);   // Remotion renders over a white page, so the original look fades through white; a style names its own matte
     if (this.shared) this.sharedBackground(active, frames, n);
+    // the logo steps aside where the recording fills the frame: each scene's share, weighted by how much of it shows in a transition
+    let sw = 0, sv = 0;
+    for (const a of active) { const w = (a.enter ?? 1) * (1 - (a.exit ?? 0)); sw += w; sv += w * this.logoShare(a); }
+    this.logoK = sw > 0 ? sv / sw : 1;
     const P = style.transition.params;
     for (let k = 0; k < active.length; k++) {
       const a = active[k];
@@ -730,11 +796,25 @@ export class Scenes {
       this.cur = null;
     }
   }
+  /**
+   * How much of the logo shows over scene `a`: all of it over cards, none over a full-bleed recording, and in fill
+   * mode it steps aside as the window grows: gone by fill 0.35, about where the window's edge reaches the logo's corner,
+   * so the mark never sits on the recording.
+   */
+  logoShare(a) {
+    const scene = this.spec.scenes[a.i];
+    if (scene.type !== 'clip' && scene.type !== 'image') return 1;
+    const lay = sceneLayout(this.spec, this.style, scene);
+    if (lay.full) return 0;
+    if (cameraModeOf(this.spec, this.style, scene) !== 'fill') return 1;
+    const t = clamp01(fillTransform(cameraAt(scene.moves, a.local, this.fps, this.camEase), lay.view, this.W, this.H).fill / 0.35);
+    return 1 - t * t * (3 - 2 * t);
+  }
   logo(n) {
     const logo = this.spec.theme.logo;
     if (!logo) return;
     const { fps, W, H } = this, k = W / 1920, h = (logo.height ?? 34) * k, pad = 44 * k;
-    const opacity = (logo.opacity ?? 0.9) * interpolate(n, [0.3 * fps, 0.9 * fps], [0, 1]);
+    const opacity = (logo.opacity ?? 0.9) * interpolate(n, [0.3 * fps, 0.9 * fps], [0, 1]) * (this.logoK ?? 1);
     if (opacity <= 0.001) return;
     const s = this.still(ID.logo(logo.src, h, this.style));
     const corner = logo.corner ?? 'bottom-right';

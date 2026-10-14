@@ -20,8 +20,8 @@
 //
 // All sizes are px at the video's width. For the default (studio) style the CSS
 // is a copy of what the Remotion template puts on screen.
-import { esc, has, ID, r2, richHtml, emChars, emWords, parseEmphasis, sceneLayout, splitBoxes, captionPos, accentOf, tagColorOf, radiusOf, sceneLabel, shellTag, markSize, effectOf, chipKey } from './layout.js';
-import { withAlpha } from './color.js';
+import { esc, has, ID, r2, richHtml, emChars, emWords, parseEmphasis, sceneLayout, splitBoxes, captionPos, accentOf, tagColorOf, radiusOf, sceneLabel, shellTag, markSize, effectOf, chipKey, placeOf, cameraModeOf, captionHasPlate } from './layout.js';
+import { withAlpha, contrast } from './color.js';
 
 export { ID, esc, has, accentOf, tagColorOf };
 
@@ -166,10 +166,11 @@ const captionBuilders = {
   },
 };
 
-const captionPill = (spec, style, scene, tag, text) => {
-  const size = spec.width * style.caption.size, color = tagColorOf(spec, style, tag), pos = captionPos(spec, style, scene);
+const captionPill = (spec, style, scene, tag, text, place) => {
+  const size = spec.width * style.caption.size, color = tagColorOf(spec, style, tag), pos = captionPos(spec, style, scene, place);
   const id = ID.pill(pos.key, tag, color, text, `${style.caption.variant}|${scene.type}`);
-  const out = runBuilder(spec, style, 'caption', { scene, tag, text, color, size, pos });
+  const accent = style.captionTags?.accent;   // an *emphasised* word on the plate, lifted like the tags (caption.tagContrast)
+  const out = runBuilder(spec, style, 'caption', { scene, tag, text, color, size, pos, ...(accent ? { rich: (t, c) => richHtml(t, c ?? accent) } : {}) });
   const hasExtras = /\bdata-p="/.test(out.html);
   const pillPoses = Array.isArray(out.poses) ? out.poses : out.poses?.pill;
   const shots = [shot(id, '#pill', { pad: 44, chars: true, poses: pillPoses, ...(hasExtras ? { hide: ['[data-p]'] } : {}) }), ...shotsOf(out, (n) => `${id}|${n}`, id)];
@@ -197,8 +198,8 @@ const calloutMark = (spec, style, scene, c) => {
 const captionJobs = (spec, style, scene, index) => {
   const jobs = [];
   if (scene.type === 'clip' && scene.captions?.length) {
-    for (const c of scene.captions) jobs.push(captionPill(spec, style, scene, c.tag ?? scene.tag, c.text));
-  } else if (scene.caption) jobs.push(captionPill(spec, style, scene, scene.tag, scene.caption));
+    for (const c of scene.captions) jobs.push(captionPill(spec, style, scene, c.tag ?? scene.tag, c.text, placeOf(scene, c)));
+  } else if (scene.caption) jobs.push(captionPill(spec, style, scene, scene.tag, scene.caption, placeOf(scene, null)));
   (scene.callouts ?? []).forEach((c, ci) => {
     if (c.label && c.box && c.atSec !== undefined) jobs.push(calloutChip(spec, style, c.label, c, scene, index, ci));
     if (c.box && c.atSec !== undefined) { const m = calloutMark(spec, style, scene, c); if (m) jobs.push(m); }
@@ -215,6 +216,22 @@ const scrimJob = (spec, style, scene) => {
   const color = K.color ?? '#000', op = K.opacity ?? 0.6, id = ID.scrim(v, hh, radius, `${color}|${op}`);
   const stops = [0, 0.15, 0.3, 0.45, 0.6, 0.75, 0.9, 1].map((t) => `${withAlpha(color, op * (1 - t * t * (3 - 2 * t)), style.rgb)} ${Math.round(t * 100)}%`).join(',');
   return job(id, `<div id="scrim" style="position:absolute;left:${v.left}px;top:${v.top + v.h - hh}px;width:${v.w}px;height:${hh}px;background:linear-gradient(to top,${stops});border-radius:0 0 ${radius}px ${radius}px"></div>`, [shot(id, '#scrim', { pad: 0 })]);
+};
+
+/**
+ * Fill mode, a caption with no plate (plain, mono, a bar with no background): one canvas-wide gradient,
+ * drawn behind the caption from the nearer edge once the recording covers its spot. caption.scrim's colour
+ * and opacity when the style has one; else black or white, whichever the caption's text stands out on.
+ */
+const fillScrimJob = (spec, style) => {
+  const needs = spec.scenes.some((sc) => (sc.type === 'clip' || sc.type === 'image') && cameraModeOf(spec, style, sc) === 'fill' && (sc.caption || sc.captions?.length));
+  if (!needs || captionHasPlate(style)) return null;
+  const K = style.caption.scrim ?? {}, W = spec.width, H = spec.height, hh = Math.round(H * (K.height ?? 0.3));
+  const text = style.caption.color ?? style.palette.foreground;
+  const color = K.color ?? ((contrast(text, '#000000', style.rgb) ?? 21) >= (contrast(text, '#ffffff', style.rgb) ?? 1) ? '#000000' : '#ffffff');
+  const op = K.opacity ?? 0.6, id = ID.fillScrim();
+  const stops = [0, 0.15, 0.3, 0.45, 0.6, 0.75, 0.9, 1].map((t) => `${withAlpha(color, op * (1 - t * t * (3 - 2 * t)), style.rgb)} ${Math.round(t * 100)}%`).join(',');
+  return job(id, `<div id="fscrim" style="position:absolute;left:0;top:${H - hh}px;width:${W}px;height:${hh}px;background:linear-gradient(to top,${stops})"></div>`, [shot(id, '#fscrim', { pad: 0 })]);
 };
 
 // ------------------------------------------------------------ title
@@ -343,6 +360,7 @@ export const jobsFor = (spec, style, media) => {
       jobs.push(...windowShell(spec, style, sceneLayout(spec, style, scene), scene, false), ...captionJobs(spec, style, scene, i), scrimJob(spec, style, scene));
     }
   });
+  jobs.push(fillScrimJob(spec, style));
   const logo = spec.theme.logo;
   if (logo) {
     const h = (logo.height ?? 34) * (W / 1920), k = style.logo ?? {}, u = W / 1920;
