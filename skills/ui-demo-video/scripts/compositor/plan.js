@@ -20,8 +20,9 @@
 //
 // All sizes are px at the video's width. For the default (studio) style the CSS
 // is a copy of what the Remotion template puts on screen.
-import { esc, has, ID, r2, richHtml, emChars, emWords, parseEmphasis, sceneLayout, splitBoxes, captionPos, accentOf, tagColorOf, radiusOf, sceneLabel, shellTag, markSize, effectOf, chipKey, placeOf, cameraModeOf, captionHasPlate } from './layout.js';
+import { esc, has, ID, r2, richHtml, emChars, emWords, parseEmphasis, sceneLayout, splitBoxes, captionPos, accentOf, tagColorOf, radiusOf, sceneLabel, shellTag, markSize, effectOf, chipKey, placeOf, cameraModeOf, captionHasPlate, calloutKind, chipSide, isLegacyCallout } from './layout.js';
 import { withAlpha, contrast, mix, ensureContrast } from './color.js';
+import { annotationJobs } from './annotate.js';
 
 export { ID, esc, has, accentOf, tagColorOf };
 
@@ -178,19 +179,19 @@ const captionPill = (spec, style, scene, tag, text, place) => {
 };
 
 const calloutChip = (spec, style, label, c, scene, index, ci) => {
-  const s = spec.width / 1920, accent = accentOf(style), side = c.box[1] < 0.18 ? 'below' : 'above';
+  const s = spec.width / 1920, accent = accentOf(style), side = chipSide(c);
   const id = ID.chip(label, accent, chipKey(style, index, ci, side));
   const out = runBuilder(spec, style, 'calloutChip', { label, s, id, callout: c, scene, index, calloutIndex: ci, side });
   return job(id, out.html, [shot(id, '#chip', { pad: 2 })], out.css);
 };
 
-/** The callout mark builder (e.g. a hand-drawn circle) captured at 2x for the callout's box. */
-const calloutMark = (spec, style, scene, c) => {
+/** The callout mark builder (e.g. a hand-drawn circle) captured at 2x for the callout's box. `kind`: what it draws (calloutKind). */
+const calloutMark = (spec, style, scene, c, kind) => {
   const lay = sceneLayout(spec, style, scene);
   if (!lay || !style.build?.calloutMark) return null;
   const u = spec.width / 1920, m = markSize(lay.view, c, u, style.callout.pad);
-  const w = Math.round(m.w * 2), h = Math.round(m.h * 2), id = ID.mark(w, h, c.style ?? 'ring');
-  const out = style.build.calloutMark(ctxFor(spec, style, 'calloutMark', { callout: c, w, h, box: { w, h }, scale: 2, id }));
+  const w = Math.round(m.w * 2), h = Math.round(m.h * 2), id = ID.mark(w, h, kind);
+  const out = style.build.calloutMark(ctxFor(spec, style, 'calloutMark', { callout: c, kind, w, h, box: { w, h }, scale: 2, id, pad: style.callout.pad * u * 2 }));
   return job(id, `<div id="mark" data-p="mark" style="position:absolute;left:20px;top:20px;width:${w}px;height:${h}px">${out.html}</div>`, [{ ...shot(id, '#mark', { pad: 4 }), poses: out.poses?.mark ?? out.poses }], out.css);
 };
 
@@ -200,9 +201,19 @@ const captionJobs = (spec, style, scene, index) => {
   if (scene.type === 'clip' && scene.captions?.length) {
     for (const c of scene.captions) jobs.push(captionPill(spec, style, scene, c.tag ?? scene.tag, c.text, placeOf(scene, c)));
   } else if (scene.caption) jobs.push(captionPill(spec, style, scene, scene.tag, scene.caption, placeOf(scene, null)));
+  // Each callout takes one of three paths. ring and spotlight: as they always were (the shader ring or dim, the style's mark
+  // builder if it has one, the chip). An annotation the style draws itself (callout.builderStyles: sketch's pencil, terminal's
+  // corner brackets): its mark builder, and its chip when callout.label.kind is 'chip'. Anything else: annotate.js paints the
+  // mark and the arrow in Node and lays the label out here; it writes c._ann for the page.
   (scene.callouts ?? []).forEach((c, ci) => {
-    if (c.label && c.box && c.atSec !== undefined) jobs.push(calloutChip(spec, style, c.label, c, scene, index, ci));
-    if (c.box && c.atSec !== undefined) { const m = calloutMark(spec, style, scene, c); if (m) jobs.push(m); }
+    if (!c.box || c.atSec === undefined) return;
+    const kind = calloutKind(style, c), legacy = isLegacyCallout(kind);
+    const builderMark = !!style.build?.calloutMark && (legacy || (style.callout.builderStyles ?? []).includes(kind));
+    const chip = legacy || style.callout.label?.kind === 'chip';
+    if (c.label && chip) jobs.push(calloutChip(spec, style, c.label, c, scene, index, ci));
+    if (builderMark) { const m = calloutMark(spec, style, scene, c, kind); if (m) jobs.push(m); }
+    if (legacy || (builderMark && chip)) delete c._ann;
+    else jobs.push(...annotationJobs(spec, style, scene, index, ci, c, { kind, builderMark, font: (role) => fontStack(style, role) }));
   });
   return jobs;
 };

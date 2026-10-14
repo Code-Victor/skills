@@ -292,6 +292,12 @@ export default {
   callout: {
     mark: 'brackets', pad: 10, radius: 3, dimAlpha: 0.6, dimColor: GROUND, scaleIn: 0.98, enterSec: 0.2, exitSec: 0.1,
     chip: { size: 22, weight: 500, padY: 8, padX: 14, radius: 0 },
+    // annotations: the accent as the pen (a dark casing keeps it 3:1 on a white page), a mono comment typed on a panel; `bracket` keeps the corner brackets
+    builderStyles: ['bracket'],
+    ink: { width: 3.6, casing: 'auto', casingDark: GROUND },
+    arrow: { width: 3.2, head: 14, bow: 0.16 },
+    label: { font: 'mono', size: 24, weight: 500, lineHeight: 1.25, em: 0.6, prefix: '# ', prefixColor: MUTED, color: FG, ligatures: false, padX: 14, padY: 7,
+      enter: 'type', cps: 50, plate: { background: 'rgba(12,13,15,0.94)', radius: 0, shadow: null, border: HAIR } },
   },
 
   motion: {

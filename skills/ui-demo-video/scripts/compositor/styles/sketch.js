@@ -562,11 +562,51 @@ const chipBuilder = (c) => {
   return { html: `<div id="chip" style="position:absolute;left:20px;top:20px;width:${n2(W0)}px;height:${n2(H0)}px;font-family:${family}">${arrow}${note}</div>` };
 };
 
-/* ---- callout mark: a scribble circle drawn on in 10 poses ---- */
+/* ---- callout mark: the annotation drawn on in 10 poses with the red pencil (a scribble circle unless the callout asks for another) ---- */
 const CIRCLE_POSES = 10;
+/** A pencil line along `pts` drawn `p` of the way (a hand's pressure: heavier in the middle, lifting at the end). */
+const pencilLine = (pts, width, color, seed, p, profile = (t) => (0.45 + 0.55 * smooth(0, 0.18, t)) * (1 - 0.45 * smooth(0.82, 1, t))) =>
+  stroke(color, ribbon(shaky(pts, { sub: 7, amp: width * 0.35, seed }), { width, profile, progress: p, seed, rough: 0.12 }), { seed });
+/** Several strokes drawn one after another, each taking its share of `progress` by length. */
+const inSequence = (paths, progress, draw) => {
+  const lens = paths.map((pts) => pts.reduce((a, q, i) => (i ? a + Math.hypot(q.x - pts[i - 1].x, q.y - pts[i - 1].y) : 0), 0)), total = lens.reduce((a, b) => a + b, 0) || 1;
+  let at = 0;
+  return paths.flatMap((pts, i) => { const p = clamp((progress * total - at) / (lens[i] || 1)); at += lens[i]; return p > 0 ? draw(pts, i, p) : []; });
+};
+/**
+ * The other annotations in this pencil, in the mark's box (w x h at 2x; the target sits `pad` inside it): a box drawn round
+ * twice, a swashed underline, a highlighter slab (multiplied by the engine, so the text stays dark), a strike, a cross, brackets.
+ */
+const sketchMark = (kind, { w, h, pad, sw, color, seed, brackets }, progress) => {
+  const R = { x: pad, y: pad, w: w - 2 * pad, h: h - 2 * pad }, P = (x, y) => ({ x, y }), m = pad * 0.32;
+  switch (kind) {
+    case 'box': {
+      const r = rng(`${seed}:bx`), j = () => (r() - 0.5) * sw * 1.2, x0 = R.x - m, y0 = R.y - m, x1 = R.x + R.w + m, y1 = R.y + R.h + m;
+      const loop = [P(x0 + j(), y0 + j()), P(x1 + j(), y0 + j()), P(x1 + j(), y1 + j()), P(x0 + j(), y1 + j()), P(x0 + j(), y0 + sw * 2 + j())];
+      return inSequence([loop.slice(0, 2), loop.slice(1, 3), loop.slice(2, 4), loop.slice(3, 5)], progress, (pts, i, p) => [pencilLine(pts, sw * 0.85, color, `${seed}:${i}`, p, (t) => 0.85 + 0.15 * Math.sin(Math.PI * t))]);
+    }
+    case 'underline': return underline(color, R.x - sw, R.x + R.w + sw, R.y + R.h + sw * 1.1, sw * 0.9, seed, progress);
+    case 'strike': {
+      const r = rng(`${seed}:st`), y = R.y + R.h / 2;
+      return [pencilLine(sampleLine(P(R.x - sw, y + (r() - 0.5) * sw), P(R.x + R.w + sw, y + (r() - 0.5) * sw), 10), sw * 0.85, color, seed, progress)];
+    }
+    case 'cross': return inSequence([[P(R.x, R.y), P(R.x + R.w, R.y + R.h)], [P(R.x + R.w, R.y), P(R.x, R.y + R.h)]], progress, (pts, i, p) => [pencilLine(sampleLine(pts[0], pts[1], 10), sw * 0.85, color, `${seed}:${i}`, p)]);
+    case 'highlight': return markerSlab({ w0: R.w, h: R.h, color, seed, alpha: 0.42, progress, ox: R.x, oy: R.y });
+    case 'bracket': {
+      const lx = R.x - m * 1.6, rx = R.x + R.w + m * 1.6, ty = R.y - m * 1.6, by = R.y + R.h + m * 1.6;
+      const sides = { left: [P(R.x, ty), P(lx, ty), P(lx, by), P(R.x, by)], right: [P(R.x + R.w, ty), P(rx, ty), P(rx, by), P(R.x + R.w, by)], top: [P(lx, R.y), P(lx, ty), P(rx, ty), P(rx, R.y)], bottom: [P(lx, R.y + R.h), P(lx, by), P(rx, by), P(rx, R.y + R.h)] };
+      return inSequence(brackets.map((b) => sides[b]).filter(Boolean), progress, (pts, i, p) => [pencilLine(pts, sw * 0.8, color, `${seed}:${i}`, p, (t) => 0.8 + 0.2 * Math.sin(Math.PI * t))]);
+    }
+    default: return [];
+  }
+};
 const markBuilder = (c) => {
   const { w, h, callout } = c, sw = strokeW(c), seed = `mark:${Math.round(w)}x${Math.round(h)}:${(callout.box ?? []).map((v) => Math.round(v * 1000)).join(',')}`;
-  const poses = Array.from({ length: CIRCLE_POSES }, (_, k) => inkImg([0, 0, w, h], scribbleCircle({ w, h, width: sw, color: c.accent, progress: (k + 1) / CIRCLE_POSES, seed, margin: sw * 0.75, n: 2.5 })));
+  const kind = c.kind ?? callout.style ?? 'circle', circle = kind === 'circle' || kind === 'ring' || kind === 'spotlight';
+  const brackets = callout.brackets ? [].concat(callout.brackets) : (c.style.callout.brackets ?? ['left', 'right']);
+  const poseAt = (p) => (circle ? scribbleCircle({ w, h, width: sw, color: c.accent, progress: p, seed, margin: sw * 0.75, n: 2.5 })
+    : sketchMark(kind, { w, h, pad: c.pad ?? (c.style.callout.pad ?? 44) * c.u * 2, sw, color: c.accent, seed: `${seed}:${kind}`, brackets }, p));
+  const poses = Array.from({ length: CIRCLE_POSES }, (_, k) => inkImg([0, 0, w, h], poseAt((k + 1) / CIRCLE_POSES)));
   // every pose is in the first HTML too (hidden), so each picture is decoded before the engine swaps the poses in
   return { html: `${poses[0]}<div style="position:absolute;left:0;top:0;opacity:0">${poses.slice(1).join('')}</div>`, poses };
 };
@@ -809,7 +849,9 @@ export default {
   card: { width: 1060, padX: 64, padY: 56, shadowPad: 96, rowEnter: 'type' },
   list: { width: 1180, gap: 26, itemGap: 16, itemEnter: 'type' },
   split: { width: 0.9, height: SPLIT_H, top: 0.13, gap: 0.045, labelSize: 0.026, labelRise: -(SPLIT_H + 0.018) },
-  callout: { mark: 'ring', pad: 44, dimAlpha: 0.2, dimColor: INK, scaleIn: 1, forSec: 2.5, enterSec: 0.02, exitSec: 0.017 },
+  // every annotation is drawn by this file's pencil (markBuilder) and labelled by its note with an arrow (chipBuilder), in held poses
+  callout: { mark: 'ring', pad: 44, dimAlpha: 0.2, dimColor: INK, scaleIn: 1, forSec: 2.5, enterSec: 0.02, exitSec: 0.017,
+    builderStyles: ['circle', 'box', 'underline', 'highlight', 'bracket', 'strike', 'cross'], label: { kind: 'chip' } },
   motion: {
     // stop motion: every entrance is a cut on a pose (a spring that settles within one frame), nothing glides
     spring: { stiffness: 360000, damping: 1200, mass: 1 }, poseRate: 10,

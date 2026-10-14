@@ -31,7 +31,19 @@ export const ID = {
   fillScrim: () => `fillscrim|${STYLE_HASH}`,   // fill mode: the screen-space gradient behind a caption with no plate once the recording covers it
   card: (i) => `scene${i}|${STYLE_HASH}|card`,
   piece: (i, name) => `scene${i}|${STYLE_HASH}|${name}`,
+  ann: (i, ci, part) => `ann|${STYLE_HASH}|s${i}.${ci}|${part}`,   // a hand-drawn annotation's pictures (annotate.js): the mark per zoom level, the arrow, the label
 };
+
+// ------------------------------------------------------------ callouts
+/** What a callout may draw: the hand-drawn annotations (Rough Notation's), then the two older highlights. */
+export const CALLOUT_STYLES = ['circle', 'box', 'underline', 'highlight', 'bracket', 'strike', 'cross', 'ring', 'spotlight'];
+export const CALLOUT_SIDES = ['above', 'below', 'left', 'right'];
+/** ring and spotlight draw exactly as they always have (the shader ring or dim, the chip label). */
+export const isLegacyCallout = (kind) => kind === 'ring' || kind === 'spotlight';
+/** A callout's annotation: its own `style`, else the style's `callout.style` (circle), else ring. */
+export const calloutKind = (style, c) => c.style ?? style.callout?.style ?? 'ring';
+/** Where a chip label sits (ring, spotlight, and styles that draw their own labels): the callout's `side` if above or below, else below the box when it is near the top. */
+export const chipSide = (c) => (c.side === 'above' || c.side === 'below' ? c.side : c.box[1] < 0.18 ? 'below' : 'above');
 
 // ------------------------------------------------------------ emphasis
 // `*word*` marks the one accented word or phrase; `\*` is a literal asterisk.

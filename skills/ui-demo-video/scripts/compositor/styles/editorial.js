@@ -160,6 +160,11 @@ export default {
     mark: 'ring', pad: 9, radius: 8, ringWidth: 2.5, ringColor: INK, dash: 0, fillAlpha: 0,
     dimAlpha: 0.7, dimColor: PAPER, scaleIn: 0.985, forSec: 2.5, enterSec: 0.3, exitSec: 0.25,
     chip: { size: 22, weight: 500, padY: 7, padX: 12, radius: 3, background: PAPER, color: INK },
+    // annotations: the editor's vermilion pencil (a finer line), and the margin note in the serif's italic on a slip of the page's paper
+    ink: { width: 3.6, alpha: 0.96, casing: 'auto' },
+    arrow: { width: 3, length: 84, head: 14, bow: 0.18 },
+    label: { font: 'display', size: 34, weight: 500, italic: true, lineHeight: 1.12, em: 0.44, padX: 12, padY: 4, color: null,
+      plate: { background: PAPER, radius: 2, shadow: '0 1px 2px rgba(28,27,25,0.12)', border: 'rgba(28,27,25,0.32)' } },
   },
 
   motion: {
