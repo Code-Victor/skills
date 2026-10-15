@@ -489,6 +489,7 @@ node scripts/demo.mjs init <dir> --figure --name <name>
 | `--stale-ok` | Render even if a clip's take changed or has no `take.json` (normally the `camera` stage stops and names the take) |
 | `--no-rehearse` | Skip the dry run |
 | `--draft` | Record figure takes at 30 fps, DPR 1 and JPEG quality 80, for fast review rounds. The take's `take.json` says `draft: true`, and the draft flag is in the fingerprint, so the next run without `--draft` records it again. Screen takes are not affected |
+| `--workers n` | Tabs that record one seekable figure take at once (`"seekable": true` in its hook). The default is half the cores, at most 4; `1` records in one tab. The frames are the same whatever the number, so it is not in the fingerprint. A figure that is not seekable, and every screen take, ignore it |
 | `--max-mb 10` | Size cap for the PR copy |
 | `--gif 12:6` | Also a GIF of 6 seconds starting at 12 |
 | `--port 9222` | The Chrome debugging port (also handed to `chrome.sh`) |

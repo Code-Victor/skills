@@ -59,6 +59,12 @@
 //   --no-rehearse        skip the dry run
 //   --max-mb 10          size cap for the PR copy
 //   --gif <start:dur>    also a GIF excerpt, e.g. 12:6
+//   --draft              record figure takes quick, for review rounds: 30 fps,
+//                        DPR 1, JPEG quality 80. Their take.json says draft, and
+//                        the next run without --draft records them again
+//   --workers n          tabs that record one seekable figure take at once
+//                        (default half the cores, at most 4; 1 = one tab). A
+//                        figure that is not seekable always uses one
 //   --port 9222          Chrome's debugging port
 //   --parallel 1         takes rehearsed and recorded at once. Recording is
 //                        limited by the CPU, so more than 1 only helps on an
@@ -76,6 +82,7 @@
 // page needs a sign-in (run scripts/chrome.sh --login <url>).
 import { spawn, spawnSync } from 'node:child_process';
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { availableParallelism } from 'node:os';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { checkDemo, checkSpec } from './check-video.mjs';
@@ -89,7 +96,7 @@ const secs = (t0 = T0) => +((Date.now() - t0) / 1000).toFixed(1);
 
 // ---------------------------------------------------------------- arguments
 
-const VALUE = new Set(['retake', 'takes', 'only', 'max-mb', 'gif', 'port', 'parallel', 'url', 'name', 'style', 'styles']);
+const VALUE = new Set(['retake', 'takes', 'only', 'max-mb', 'gif', 'port', 'parallel', 'workers', 'url', 'name', 'style', 'styles']);
 const argv = process.argv.slice(2);
 const pos = [];
 const opt = {};
@@ -108,7 +115,7 @@ const USAGE = `usage:
   demo.mjs <demo.json> [--retake a,b|all] [--takes a,b] [--only capture|render|deliver]
                        [--style <name> | --styles a,b,c|all]
                        [--no-deliver] [--no-rehearse] [--max-mb 10] [--gif start:dur]
-                       [--port 9222] [--parallel 1] [--json] [--force]
+                       [--draft] [--workers n] [--port 9222] [--parallel 1] [--json] [--force]
 Read the top of this file for the stages and the folder layout. After you change
 the APP (not demo.json) use --retake: the fingerprint cannot see your code.`;
 if (opt.help || opt.h || !pos.length) {
@@ -123,6 +130,12 @@ for (const k of ['style', 'styles']) {
 }
 if (opt.style && opt.styles) {
   console.error('--style renders one look, --styles compares several: use one of them');
+  process.exit(2);
+}
+// Tabs per seekable figure take: half the cores, at most 4.
+const WORKERS = opt.workers === undefined ? Math.min(4, Math.max(1, Math.floor(availableParallelism() / 2))) : +opt.workers;
+if (!(Number.isInteger(WORKERS) && WORKERS >= 1)) {
+  console.error(`--workers must be a whole number of tabs, 1 or more (got ${opt.workers}); 1 records every figure take in one tab`);
   process.exit(2);
 }
 const JSON_OUT = !!opt.json;
@@ -459,6 +472,9 @@ await stage('validate', () => {
   name = demo.name || basename(demoFile).replace(/\.?demo\.json$|\.json$/, '');
   if (!SAFE_NAME.test(name)) name = basename(dir).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[-.]+/, '') || 'demo';
   takes = Object.fromEntries(used.map((n) => [n, takeSpec(demo, n, { dir, file: demoFile })]));
+  // --draft: figure takes record quick (30 fps, DPR 1, JPEG 80). It is part of
+  // their fingerprint, so a run without it records them again in full.
+  if (opt.draft) for (const t of Object.values(takes)) if (t.source === 'figure') t.draft = true;
   for (const d of Object.values(paths)) mkdirSync(d, { recursive: true });
   summary.name = name;
   // The style this run renders in: the flag, else what demo.json says, else
@@ -489,7 +505,10 @@ if (doCapture) {
       if (retake.has(n)) why[n] = 'retake';
       else if (!have) why[n] = 'no clip yet';
       else if (!prev) why[n] = 'no take.json (not recorded by this tool)';
-      else if (prev.hash !== takeHash(takes[n])) why[n] = 'take changed';
+      else if (prev.hash !== takeHash(takes[n])) {
+        const draftOnly = takes[n].source === 'figure' && !!prev.draft !== !!takes[n].draft;
+        why[n] = draftOnly ? (takes[n].draft ? 'draft' : 'full quality after a draft') : 'take changed';
+      }
       else summary.reused.push(n);
     }
     toRecord = Object.keys(why);
@@ -570,7 +589,7 @@ if (doCapture) {
       const fps = +(t.options.fps ?? 60), frames = Math.round(t.duration * fps);
       const timeoutSec = Math.max(300, Math.ceil(frames * 0.085 * (t.dpr / 1.5) ** 2 * 4 + 120));
       const r = await run(`record-${n}`, process.execPath,
-        [join(HERE, 'capture-figure.mjs'), ...captureArgs(t, { out: clipFile(n), allowTemp: !!opt.force }), '--json'], { timeoutSec });
+        [join(HERE, 'capture-figure.mjs'), ...captureArgs(t, { out: clipFile(n), allowTemp: !!opt.force, workers: WORKERS }), '--json'], { timeoutSec });
       const j = lastJson(r.text);
       if (r.code !== 0 || !j?.ok) {
         const why = r.timedOut ? `timed out after ${timeoutSec} s (killed by the runner; the machine may be overloaded, see build/logs)` : (j?.error ?? tail(r.text, 8));
@@ -579,7 +598,7 @@ if (doCapture) {
       writeFileSync(takeFile(n), `${JSON.stringify({
         hash: takeHash(t), source: 'figure', page: relative(dir, t.page), duration: t.duration, recordedAt: new Date().toISOString(),
         width: j.width, height: j.height, durationSec: j.durationSec, fps: j.fps, frames: j.frames, msPerFrame: j.msPerFrame,
-        wallSec: j.wallSec, mode: j.mode, draft: !!j.draft,
+        wallSec: j.wallSec, mode: j.mode, workers: j.workers ?? 1, draft: !!j.draft,
       }, null, 1)}\n`);
       for (const w of j.warnings ?? []) warn(`take ${n}: ${w}`);
       return { ok: true, j };
@@ -623,7 +642,8 @@ if (doCapture) {
       if (failed.length) return reportFailures('record', failed);
       summary.recorded = toRecord;
       slots = Math.min(slots, toRecord.length);
-      const each = (n) => `${n} ${res.get(n).j.wallSec}s${isFigure(n) ? ` (${res.get(n).j.frames} frames, ${res.get(n).j.msPerFrame} ms a frame)` : ''}`;
+      const fig = (j) => ` (${j.frames} frames, ${j.msPerFrame} ms a frame, ${j.workers ?? 1} tab${(j.workers ?? 1) === 1 ? '' : 's'}${j.draft ? ', draft' : ''})`;
+      const each = (n) => `${n} ${res.get(n).j.wallSec}s${isFigure(n) ? fig(res.get(n).j) : ''}`;
       return `${toRecord.map(each).join(', ')} (${slots} at a time)`;
     });
   } else {
@@ -646,7 +666,11 @@ if (doRender) {
       const stale = used.flatMap((n) => {
         const t = readTake(n);
         if (!t) return [`take "${n}": no take.json next to its clip (the last recording failed, or the clip was not recorded by this tool)`];
-        if (t.hash !== takeHash(takes[n])) return [`take "${n}": demo.json changed since it was recorded`];
+        if (t.hash !== takeHash(takes[n])) {
+          if (t.source === 'figure' && !!t.draft !== !!takes[n].draft)
+            return [`take "${n}": recorded ${t.draft ? 'as a draft; add --draft to render it' : 'in full; leave out --draft to render it'}`];
+          return [`take "${n}": demo.json changed since it was recorded`];
+        }
         return [];
       });
       if (stale.length) return fail('camera', [...stale, `Record ${stale.length === 1 ? 'it' : 'them'} (demo.mjs ${basename(demoFile)} --takes ${used.filter((n) => stale.some((m) => m.startsWith(`take "${n}"`))).join(',')}), or render the old clips anyway with --stale-ok`]);

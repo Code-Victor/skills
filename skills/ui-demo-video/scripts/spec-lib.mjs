@@ -247,8 +247,8 @@ export const estimateDuration = (steps) => {
 
 // The capture.mjs arguments for a take (capture-figure.mjs for a figure
 // take). `rehearse` leaves out what only a recording needs.
-export const captureArgs = (take, { rehearse = false, port, stepsFile, out, allowTemp = false, draft = false } = {}) => {
-  if (take.source === 'figure') return figureArgs(take, { out, allowTemp, draft });
+export const captureArgs = (take, { rehearse = false, port, stepsFile, out, allowTemp = false, draft = false, workers } = {}) => {
+  if (take.source === 'figure') return figureArgs(take, { out, allowTemp, draft, workers });
   const a = ['clip', '--url', take.url, '--steps', stepsFile];
   if (port) a.push('--port', String(port));
   for (const [k, v] of Object.entries(take.options)) {
@@ -264,7 +264,9 @@ export const captureArgs = (take, { rehearse = false, port, stepsFile, out, allo
   return a;
 };
 
-const figureArgs = (take, { out, allowTemp, draft }) => {
+// `workers` is how many tabs may share a seekable figure: it changes the
+// time a take takes, never its frames, so it is not in the fingerprint.
+const figureArgs = (take, { out, allowTemp, draft, workers }) => {
   const [w, h] = take.viewport;
   const a = ['--page', take.page, '--out', out, '--viewport', `${w}x${h}`, '--dpr', String(take.dpr)];
   if (take.timeline) a.push('--timeline', JSON.stringify(take.timeline));
@@ -274,6 +276,7 @@ const figureArgs = (take, { out, allowTemp, draft }) => {
   a.push('--seed', String(take.seed), '--transitions', take.transitions);
   for (const [k, v] of Object.entries(take.options)) a.push(CAPTURE_OPTIONS[k].flag, String(v));
   if (draft || take.draft) a.push('--draft');
+  if (workers) a.push('--workers', String(workers));
   if (allowTemp) a.push('--allow-temp');
   return a;
 };

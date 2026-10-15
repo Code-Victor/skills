@@ -89,9 +89,10 @@ seconds. That is one machine and one video, so treat it as an example, not a
 promise.
 
 An explainer is mostly drawing time. A figure takes 30 to 90 minutes to
-draw. Recording a 40 second explainer at 60fps takes about 3.5 minutes on an
-Apple Silicon laptop, and a draft for review rounds (`--draft`) is much
-faster. Those are one machine and one figure, so treat them as an example.
+draw. Recording a 40 second explainer at 60fps took 3 to 4 minutes on an
+Apple Silicon laptop (under 2 minutes for a seekable figure, which records in
+several tabs at once), and a draft for review rounds (`--draft`) about a
+minute. Those are one machine and one figure, so treat them as an example.
 
 ### What you can put in a video
 

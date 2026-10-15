@@ -23,8 +23,9 @@
 //          and timers, rAF, Date, performance.now, CSS and Web Animations and
 //          a seeded Math.random all follow it. --steps drive it with timed
 //          pointer and key input.
-// Either way each frame then waits for two painted frames, is screenshot and
-// streamed into ffmpeg (capture-encode.mjs: H.264, yuv420p, TV range).
+// Each frame is then screenshot (clock mode first waits for two painted
+// frames, which its page's own observers need) and streamed into ffmpeg
+// (capture-encode.mjs: H.264, yuv420p, TV range).
 //
 // It runs its own headless Chrome on a throwaway profile, removed when it
 // exits, whatever happens: no window, no focus change, nothing left on a port.
@@ -56,6 +57,10 @@
 //                          seconds into --preview-dir; nothing is encoded
 //   --hash-frames <file>   the SHA-1 of every screenshot, one a line, to prove
 //                          two runs are the same
+//   --workers 4            tabs for a seekable figure (seekable: true in its
+//                          hook): each draws a contiguous range of frames, and
+//                          the frames come out the same as in one tab. Any
+//                          other page records in one tab whatever this says
 //   --crf 14 --jpeg-quality 95 --encoder x264   as capture.mjs
 //   --allow-temp           allow --out under /tmp or a session scratchpad
 //   --json                 print a one-line JSON summary instead of the last line
@@ -64,13 +69,11 @@
 // A recording warns when its frames stay byte for byte the same for more than
 // 2.5 s of video while figure time moves: the page is not drawing from the
 // time it is given. A hold (figure time standing still) never warns.
-//
-// Not written yet: --workers (seekable figures in several tabs at once). It
-// plugs into the frame loop below.
 
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -99,7 +102,7 @@ for (let i = 0; i < argv.length; i++) {
 const USAGE = `Usage:
   capture-figure.mjs --page <file.html> --out <clip.mp4> [--viewport 1920x1080] [--dpr 1.5] [--fps 60]
     (--timeline <json> | --duration <sec>) [--marks <json>] [--steps <json>] [--seed n] [--transitions off|on]
-    [--draft] [--hash-frames <file>] [--json]
+    [--draft] [--workers n] [--hash-frames <file>] [--json]
   capture-figure.mjs --page <file.html> (--timeline <json> | --duration <sec>) --preview 2,8,20 --preview-dir <dir>
 Read the top of this file for every option.`;
 const usage = (msg) => {
@@ -207,7 +210,10 @@ const warn = (msg) => {
 const wallSec = () => (Date.now() - T0) / 1000;
 
 let chrome = null; // { proc, profile }: our own Chrome, gone by the time we exit
+let port = null;
 let tab = null;
+const extraTabs = []; // parallel capture's other tabs
+let framesDir = null; // parallel capture's frames, gone by the time we exit
 let sink = null;
 let ending = false;
 
@@ -240,7 +246,8 @@ const stopChrome = async () => {
 const cleanup = async () => {
   try { sink?.abort(); } catch {}
   if (tmpOut) rmSync(tmpOut, { force: true });
-  if (tab) await tab.close().catch(() => {});
+  if (framesDir) rmSync(framesDir, { recursive: true, force: true });
+  for (const on of [tab, ...extraTabs]) if (on) await on.close().catch(() => {});
   await stopChrome();
 };
 const die = async (reason, code = 1) => {
@@ -264,6 +271,7 @@ process.on('unhandledRejection', (e) => die(e?.message ?? String(e)));
 process.on('uncaughtException', (e) => die(e?.message ?? String(e)));
 // Last resort for an exit nobody planned: no Chrome or profile outlives us.
 process.on('exit', () => {
+  if (framesDir) try { rmSync(framesDir, { recursive: true, force: true }); } catch {}
   if (!chrome) return;
   try { chrome.proc.kill('SIGKILL'); } catch {}
   spawnSync('pkill', ['-KILL', '-f', `user-data-dir=${chrome.profile}`]);
@@ -291,8 +299,9 @@ const findChrome = () => {
   return null;
 };
 
-// A headless Chrome of our own on a fresh profile. Software GL (SwiftShader)
-// and CPU raster give the same pixels on every run. Resolves to its port.
+// A headless Chrome of our own on a fresh profile. Software GL (SwiftShader
+// for WebGL), CPU raster and CPU compositing give the same pixels on every
+// run. Resolves to its port.
 const launchChrome = async () => {
   const bin = findChrome();
   if (!bin) return die('Chrome not found. Set CHROME_PATH to its binary.', 4);
@@ -303,6 +312,10 @@ const launchChrome = async () => {
     '--allow-file-access-from-files', `--force-device-scale-factor=${dpr}`, '--disable-gpu-rasterization',
     // Raster whole tiles: partial raster redraws only what changed, so edges depend on the frames drawn before.
     '--disable-partial-raster',
+    // Composite on the CPU too. Through SwiftShader every screenshot took
+    // about twice as long, for the same bytes on SVG and HTML figures (a
+    // WebGL canvas comes out a level apart on a few pixels, run after run alike).
+    '--disable-gpu-compositing',
     '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', `--window-size=${vw},${vh}`,
     // A fresh profile would otherwise start fetching components and an on-device model.
     '--disable-component-update',
@@ -347,8 +360,9 @@ const connect = async (port, opts) => {
 // ---------------------------------------------------------------- page
 
 // Exceptions inside the page are errors here: a frame that threw drew nothing.
-const evaluate = async (expression, label = 'eval') => {
-  const r = await tab.send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
+// `on` is the tab (the first one unless parallel capture says otherwise).
+const evaluate = async (expression, label = 'eval', on = tab) => {
+  const r = await on.send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
   if (r?.exceptionDetails) {
     const d = r.exceptionDetails;
     throw new Error(`${label} threw: ${d.exception?.description?.split('\n')[0] ?? d.text}`);
@@ -364,9 +378,9 @@ const pageError = (msg) => {
 
 // Pinned size and scale, motion allowed (reduced motion would still a figure),
 // and the recording flag before any page script runs.
-const preparePage = async () => {
-  const { send } = tab;
-  tab.on((m) => {
+const preparePage = async (on = tab) => {
+  const { send } = on;
+  on.on((m) => {
     if (m.method === 'Inspector.targetCrashed') die('the page crashed');
     if (m.method === 'Runtime.exceptionThrown') {
       const d = m.params.exceptionDetails;
@@ -385,34 +399,34 @@ const preparePage = async () => {
   await send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.__figureRecording = true;' });
 };
 
-const loadPage = async () => {
+const loadPage = async (on = tab) => {
   let done;
   const loaded = new Promise((r) => (done = r));
   const h = (m) => {
     if (m.method === 'Page.loadEventFired') done(true);
   };
-  tab.on(h);
+  on.on(h);
   const timer = setTimeout(() => done(false), 30000);
-  const nav = await tab.send('Page.navigate', { url: pathToFileURL(page).href });
+  const nav = await on.send('Page.navigate', { url: pathToFileURL(page).href });
   if (nav.errorText) {
     clearTimeout(timer);
-    tab.off(h);
+    on.off(h);
     return die(`could not load ${page}: ${nav.errorText}`);
   }
   const ok = await loaded;
   clearTimeout(timer);
-  tab.off(h);
+  on.off(h);
   if (!ok) warn('the page had not finished loading after 30 s; carrying on');
-  await evaluate('document.fonts.ready.then(() => true)', 'document.fonts.ready');
-  const size = await evaluate('[document.documentElement.scrollWidth, document.documentElement.scrollHeight]');
+  await evaluate('document.fonts.ready.then(() => true)', 'document.fonts.ready', on);
+  const size = await evaluate('[document.documentElement.scrollWidth, document.documentElement.scrollHeight]', 'page size', on);
   if (size && (size[0] > vw + 1 || size[1] > vh + 1))
     warn(`the page is ${size[0]}x${size[1]} CSS px but the viewport is ${vw}x${vh}: it must lay itself out to fit, or the frame shows only its top left`);
 };
 
 // A module script can call figureHook() a moment after load (after an await).
-const detectMode = async () => {
+const detectMode = async (on = tab) => {
   for (let i = 0; i < 20; i++) {
-    if (await evaluate("typeof window.__figure?.frame === 'function'")) return 'hook';
+    if (await evaluate("typeof window.__figure?.frame === 'function'", 'mode', on)) return 'hook';
     await sleep(50);
   }
   return 'clock';
@@ -425,13 +439,14 @@ const detectMode = async () => {
 //   advance(t, dt, v)  put figure time t on the page (dt: video seconds since the
 //                      last frame; v: this frame's video second)
 //   paint()            resolve once that frame is on screen, ready for a screenshot
+// Hook mode's functions also take the tab, last: parallel capture drives several.
 // Hook mode calls the page's own window.__figure. Clock mode (no hook) runs
 // the page's own loop on a virtual clock that figure-clock.js installs before
 // the page loads; advance() moves it on.
 const READY_MS = 20000;
 const hookMode = {
   name: 'hook',
-  async prepare() {
+  async prepare(on = tab) {
     const info = await evaluate(`Promise.race([
       Promise.resolve(window.__figure.ready).then(() => 'ok'),
       new Promise((r) => setTimeout(() => r('timeout'), ${READY_MS})),
@@ -439,7 +454,7 @@ const hookMode = {
       const f = window.__figure;
       const marks = Array.isArray(f.marks) ? f.marks.map((m) => ({ id: m.id, t: m.t, anchor: m.anchor, label: m.label, poster: m.poster, look: m.look })) : [];
       return { ready, version: f.version, range: f.range, seekable: f.seekable === true, marks };
-    })`, 'window.__figure.ready');
+    })`, 'window.__figure.ready', on);
     if (info.ready !== 'ok') return die(`window.__figure.ready did not resolve within ${READY_MS / 1000} s (fonts, images or a warm-up that never finishes?)`);
     if (info.version !== 1) return die(`window.__figure.version is ${JSON.stringify(info.version)}; this recorder reads version 1 (build the page with scripts/figure-hook.js)`);
     const r = info.range;
@@ -449,8 +464,12 @@ const hookMode = {
     if (bad) return die(`a mark on the page needs an id and a figure time t (got ${JSON.stringify(bad)})`);
     return info;
   },
-  advance: (t, dt) => evaluate(`Promise.resolve(window.__figure.frame(${t}, ${dt})).then(() => true)`, `window.__figure.frame(${t}, ${dt})`),
-  paint: () => evaluate('new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))', 'paint'),
+  advance: (t, dt, v, on = tab) => evaluate(`Promise.resolve(window.__figure.frame(${t}, ${dt})).then(() => true)`, `window.__figure.frame(${t}, ${dt})`, on),
+  // No wait: frame() has drawn by the time it returns, and
+  // Page.captureScreenshot makes a new frame of its own. Waiting for two
+  // painted frames as well gave the same bytes on every frame and cost a
+  // quarter of the time.
+  paint: async () => true,
 };
 
 // Clock mode: figure-clock.js replaces the page's time sources (rAF, timers,
@@ -553,8 +572,8 @@ const MODES = { hook: hookMode, clock: clockMode };
 
 // ---------------------------------------------------------------- frames
 
-const shot = async (format) => {
-  const { data } = await tab.send('Page.captureScreenshot', {
+const shot = async (format, on = tab) => {
+  const { data } = await on.send('Page.captureScreenshot', {
     format, ...(format === 'jpeg' ? { quality: jpegQuality } : {}),
     clip: { x: 0, y: 0, width: vw, height: vh, scale: 1 },
   });
@@ -574,7 +593,7 @@ const imageSize = (b) => {
 };
 
 // Where a mark's anchor is, as fractions of the frame.
-const anchorBox = async (m) => {
+const anchorBox = async (m, on = tab) => {
   if (typeof m.anchor !== 'string' || !m.anchor) return null;
   const r = await evaluate(`(() => {
     let e;
@@ -582,7 +601,7 @@ const anchorBox = async (m) => {
     if (!e) return { missing: true };
     const b = e.getBoundingClientRect();
     return { box: [b.left, b.top, b.width, b.height] };
-  })()`, `mark "${m.id}" anchor`);
+  })()`, `mark "${m.id}" anchor`, on);
   if (r.bad) { warn(`mark "${m.id}": anchor ${m.anchor} is not a valid selector (${r.bad})`); return null; }
   if (r.missing) { warn(`mark "${m.id}": nothing on the page matches anchor ${m.anchor}, so it has no box`); return null; }
   const [x, y, w, h] = r.box;
@@ -590,12 +609,24 @@ const anchorBox = async (m) => {
   return [x / vw, y / vh, w / vw, h / vh].map((v) => +v.toFixed(4));
 };
 
+// A mark as an event, in capture.mjs's format.
+const markEvent = (m, v, box) => ({
+  type: 'mark', label: m.id, t: +v.toFixed(3), ...(box ? { box } : {}), ...(m.label ? { text: String(m.label) } : {}),
+  ...(m.poster === true ? { poster: true } : {}), ...(m.look === false ? { look: false } : {}),
+});
+
 const W = Math.round((vw * dpr) / 2) * 2, H = Math.round((vh * dpr) / 2) * 2;
+const sha1 = (buf) => createHash('sha1').update(buf).digest('hex');
+const checkSize = (buf) => {
+  const size = imageSize(buf);
+  if (size && (Math.abs(size[0] - vw * dpr) > 2 || Math.abs(size[1] - vh * dpr) > 2))
+    warn(`frames are ${size[0]}x${size[1]}, not ${Math.round(vw * dpr)}x${Math.round(vh * dpr)} (viewport ${vw}x${vh} at ${dpr}x); this Chrome ignores the scale`);
+};
 
 // Step every frame in order. Recording: paint, screenshot and encode each one.
 // Preview: paint and save a PNG only at the asked-for seconds (clock mode
-// still paints wherever input goes in). Parallel capture would run this loop
-// over a contiguous range of frames in each of several tabs.
+// still paints wherever input goes in). runParallel below splits the same
+// work over several tabs for a seekable figure.
 const runFrames = async ({ mode, times, due }) => {
   const N = times.length;
   const events = [];
@@ -611,21 +642,11 @@ const runFrames = async ({ mode, times, due }) => {
     await mode.advance(times[i], i === 0 ? 0 : 1 / fps, v);
     if (PREVIEW && !wanted.has(i)) continue;
     await mode.paint();
-    for (const m of due.get(i) ?? []) {
-      const box = await anchorBox(m);
-      events.push({
-        type: 'mark', label: m.id, t: +v.toFixed(3), ...(box ? { box } : {}), ...(m.label ? { text: String(m.label) } : {}),
-        ...(m.poster === true ? { poster: true } : {}), ...(m.look === false ? { look: false } : {}),
-      });
-    }
+    for (const m of due.get(i) ?? []) events.push(markEvent(m, v, await anchorBox(m)));
     const buf = await shot(PREVIEW ? 'png' : 'jpeg');
-    if (i === 0) {
-      const size = imageSize(buf);
-      if (size && (Math.abs(size[0] - vw * dpr) > 2 || Math.abs(size[1] - vh * dpr) > 2))
-        warn(`frames are ${size[0]}x${size[1]}, not ${Math.round(vw * dpr)}x${Math.round(vh * dpr)} (viewport ${vw}x${vh} at ${dpr}x); this Chrome ignores the scale`);
-    }
+    if (i === 0) checkSize(buf);
     // Every frame is hashed (it is cheap): --hash-frames and the freeze check read them.
-    hashes.push(createHash('sha1').update(buf).digest('hex'));
+    hashes.push(sha1(buf));
     if (PREVIEW) {
       const file = join(previewDir, `preview-${wanted.get(i)}s.png`);
       writeFileSync(file, buf);
@@ -636,7 +657,85 @@ const runFrames = async ({ mode, times, due }) => {
       say(`frame ${i + 1}/${N}, ${((shown - t0) / (i + 1)).toFixed(0)} ms a frame`);
     }
   }
-  return { events, hashes, loopMs: Date.now() - t0, stepped: last + 1 };
+  return { events, hashes, loopMs: Date.now() - t0, stepped: last + 1, workers: 1 };
+};
+
+// Parallel capture, for a seekable figure (frame(t) depends on t alone): n
+// tabs each draw a contiguous range of frames with frame(t, 0) and write them
+// as JPEGs into a frames folder beside the output, while one encoder takes
+// them in order as they land and deletes each once it is in. Each frame is
+// drawn from its own t, and Chrome rasters whole tiles
+// (--disable-partial-raster), so the bytes match one tab's frame for frame.
+// Every tab has a window of its own: a background tab can be hidden, and a
+// hidden page gets no frames. Returns null (and closes the extra tabs) if
+// Chrome hides one anyway; the caller then records in one tab.
+// The tabs share one Chrome, whose browser process sat at one full core
+// handing out the screenshots: four tabs measured about twice as fast as one. A Chrome per tab
+// measured about three times, for about 1 GB more memory a tab; on a 16 GB
+// Mac that swapped, so it is not done.
+const runParallel = async ({ n, times, due }) => {
+  const N = times.length;
+  const more = await Promise.all(Array.from({ length: n - 1 }, async () => {
+    const on = await connect(port, { newWindow: true });
+    extraTabs.push(on);
+    await preparePage(on);
+    await loadPage(on);
+    if ((await detectMode(on)) !== 'hook') throw new Error('a second tab of the same page had no window.__figure');
+    await hookMode.prepare(on);
+    return on;
+  }));
+  const tabs = [tab, ...more];
+  const seen = await Promise.all(tabs.map((on) => evaluate('document.visibilityState', 'visibility', on)));
+  if (seen.some((v) => v !== 'visible')) {
+    warn(`Chrome kept ${seen.filter((v) => v !== 'visible').length} of ${n} tabs hidden, so this take was recorded in one tab`);
+    while (extraTabs.length) await extraTabs.pop().close().catch(() => {});
+    return null;
+  }
+  framesDir = join(dirname(out), `.${basename(out, extname(out))}.${process.pid}.frames`);
+  mkdirSync(framesDir, { recursive: true });
+  const landed = Array.from({ length: N }, () => {
+    let done;
+    const p = new Promise((r) => (done = r));
+    return { p, done };
+  });
+  const hashes = new Array(N);
+  const events = [];
+  const t0 = Date.now();
+  let drawn = 0;
+  const work = async (on, from, to) => {
+    for (let i = from; i < to && !ending; i++) {
+      const v = i / fps;
+      await hookMode.advance(times[i], 0, v, on);
+      await hookMode.paint(on);
+      for (const m of due.get(i) ?? []) events.push(markEvent(m, v, await anchorBox(m, on)));
+      const buf = await shot('jpeg', on);
+      if (i === 0) checkSize(buf);
+      hashes[i] = sha1(buf);
+      const file = join(framesDir, `${i}.jpg`);
+      await writeFile(file, buf);
+      drawn++;
+      landed[i].done(file);
+    }
+  };
+  sink = startEncoder({ out: tmpOut, w: W, h: H, fps, crf, encoder });
+  const encode = async () => {
+    let shown = Date.now();
+    for (let i = 0; i < N; i++) {
+      const file = await landed[i].p;
+      await sink.push(await readFile(file), i / fps);
+      rmSync(file, { force: true });
+      if (Date.now() - shown > 5000) {
+        shown = Date.now();
+        say(`frame ${i + 1}/${N} encoded, ${drawn} drawn, ${((shown - t0) / drawn).toFixed(0)} ms a frame on ${n} tabs`);
+      }
+    }
+  };
+  // Contiguous ranges, as even as they come.
+  const edge = (k) => Math.round((k * N) / n);
+  await Promise.all([encode(), ...tabs.map((on, k) => work(on, edge(k), edge(k + 1)))]);
+  rmSync(framesDir, { recursive: true, force: true });
+  framesDir = null;
+  return { events, hashes, loopMs: Date.now() - t0, stepped: N, workers: n };
 };
 
 // A figure that stops changing while its time moves on is not drawing from
@@ -675,12 +774,13 @@ const warnFrozen = (hashes, times, clock) => {
 // ---------------------------------------------------------------- run
 
 const main = async () => {
-  if (workers > 1) return die('parallel capture (--workers) is not implemented yet; leave --workers out to record in one tab', 2);
   if (spawnSync('ffmpeg', ['-version'], { stdio: 'ignore' }).status !== 0) return die('ffmpeg not found on PATH');
   mkdirSync(PREVIEW ? previewDir : dirname(out), { recursive: true });
 
-  const port = await launchChrome();
-  tab = await connect(port);
+  port = await launchChrome();
+  // A window of its own, like every tab here: a tab that shares the first
+  // window with about:blank painted a few frames differently now and then.
+  tab = await connect(port, { newWindow: true });
   await preparePage();
   await loadPage();
   const modeName = await detectMode();
@@ -731,7 +831,9 @@ const main = async () => {
     }
   }
 
-  const r = await runFrames({ mode, times, due });
+  // Several tabs only for a seekable figure; any other page ignores --workers.
+  const tabs = !PREVIEW && !clock && info.seekable ? Math.min(workers, N) : 1;
+  const r = (tabs > 1 ? await runParallel({ n: tabs, times, due }) : null) ?? (await runFrames({ mode, times, due }));
   if (hashFile) {
     mkdirSync(dirname(hashFile), { recursive: true });
     writeFileSync(hashFile, `${r.hashes.join('\n')}\n`);
@@ -762,10 +864,10 @@ const main = async () => {
   const sheet = writeSheet(out, lengthSec);
   say(`sheet ${sheet}`);
   await succeed(
-    `saved ${out} (${mode.name} mode, ${W}x${H}, ${lengthSec}s, ${N} frames at ${fps} fps, ${distinct} distinct, ${msPerFrame} ms a frame, ${(bytes / 1e6).toFixed(1)} MB, wall ${wallSec().toFixed(1)}s)`,
+    `saved ${out} (${mode.name} mode, ${W}x${H}, ${lengthSec}s, ${N} frames at ${fps} fps, ${distinct} distinct, ${msPerFrame} ms a frame on ${r.workers} tab${r.workers === 1 ? '' : 's'}, ${(bytes / 1e6).toFixed(1)} MB, wall ${wallSec().toFixed(1)}s)`,
     {
       file: out, events: eventsFile, sheet, width: W, height: H, durationSec: lengthSec, fps, frames: N, distinctFrames: distinct,
-      msPerFrame, mode: mode.name, draft: DRAFT, dpr, marks: markCount, ...(inputEvents.length ? { inputs: inputEvents.length } : {}), bytes, ...(hashFile ? { hashes: hashFile } : {}),
+      msPerFrame, workers: r.workers, mode: mode.name, draft: DRAFT, dpr, marks: markCount, ...(inputEvents.length ? { inputs: inputEvents.length } : {}), bytes, ...(hashFile ? { hashes: hashFile } : {}),
       ...(clockStats ? { clock: clockStats } : {}),
     },
   );

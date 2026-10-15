@@ -378,7 +378,7 @@ What it does not drive, so keep it out of a clock-mode figure:
 Limits:
 
 - **No seeking.** Frames run in order from load, so a clock-mode take is
-  always recorded on one worker.
+  always recorded in one tab.
 - **WebGL needs SwiftShader.** The recorder starts Chrome with it, so the
   pixels match between runs. Record on the recorder, not in your own browser.
 - **The viewport must hold the figure.** Anatomy pages are documents: some
@@ -389,15 +389,22 @@ Limits:
 
 ## 8. Performance
 
-Measured on an Apple Silicon laptop at DPR 1.5, 1920 by 1080 viewport
-(2880 by 1620 frames):
+Measured on an Apple Silicon laptop (M2 Pro, 10 cores, 16 GB) while other
+work ran on it (load average 6 to 16, and much higher for the last two runs
+of four tabs), recording `examples/figure/bench.html` with the timeline in
+`examples/explainer.demo.json`: 39 s at 60 fps, a 1920 by 1080 viewport at
+DPR 1.5 (2880 by 1620 frames).
 
-| Run | Per frame | A 40 s, 60 fps video |
-|---|---|---|
-| Full | about 85 ms | about 3.5 minutes |
-| `--draft` (30 fps, DPR 1, JPEG quality 80) | TODO(measure) | TODO(measure) |
-| `--preview` (stills only, nothing encoded) | TODO(measure) | TODO(measure) |
-| `--workers 4` (seekable figures) | TODO(measure) | TODO(measure) |
+| Run | Frames | Wall time | Per frame |
+|---|---|---|---|
+| Full, one tab | 2340 | 184 to 237 s | 79 to 101 ms |
+| `--draft` (30 fps, DPR 1, JPEG quality 80) | 1170 | 61 s | 52 ms |
+| `--workers 4` (a seekable figure) | 2340 | 107 to 114 s | 46 to 49 ms |
+| `--preview` (six stills, nothing encoded) | 2041 stepped | 3 s | under 1 ms |
+
+A draft is about 3.4 times faster than a full recording, and four tabs about
+twice as fast as one. Every full run, in one tab or four, gave the same frame
+hashes.
 
 - **`--draft`** records figure takes at 30 fps, DPR 1 and JPEG quality 80
   (on `capture-figure.mjs` it overrides `--fps`, `--dpr` and
@@ -409,10 +416,18 @@ Measured on an Apple Silicon laptop at DPR 1.5, 1920 by 1080 viewport
   seconds, and encodes nothing. With no `--preview-dir` the stills go next to
   `--out`.
 - **Parallel capture** is for figures with `"seekable": true` in their hook.
-  `--workers n` on `capture-figure.mjs` splits the frames into `n` ranges in
-  tabs of one Chrome, then encodes them in order. The frames are identical to
-  a single worker's, so a parallel recording is the same video.
-  A figure with springs is not seekable and runs on one worker.
+  `demo.mjs` uses half the cores, at most 4 tabs (`--workers n` changes it,
+  `--workers 1` records in one tab). The frames are split into contiguous
+  ranges, one a tab, each tab in a window of its own in one Chrome; each tab
+  calls `frame(t, 0)` and writes its frames as JPEGs into a hidden folder
+  beside the clip, and one encoder takes them in order as they land. The
+  folder is removed afterwards, also when the take fails. The frames are
+  identical to one tab's, so a parallel recording is the same video. A
+  figure with springs is not seekable and always records in one tab.
+- **Why not faster.** Each frame is drawn on the CPU, and one Chrome hands
+  out every screenshot from one busy browser process, so four tabs get about
+  twice the speed, not four times. On a machine that is busy already, extra
+  tabs gain little.
 
 Do not run a build or another render while recording: it slows frames and
 risks a stall. Recording is one Chrome and one encode at a time.
