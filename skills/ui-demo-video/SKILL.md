@@ -142,6 +142,9 @@ A figure take replaces `url` and `steps` with a page and a timeline:
   the flag records them again at full quality.
 - **Pace with the figure.** 30 to 45 s, slow into each event, hold the end,
   and keep something moving past the halfway point. One idea per caption.
+- **A page with no hook still records**, on a virtual clock: its own idle
+  tour plays, the same on every run, and `figureSteps` can steer it with
+  timed pointer and key input (`references/figure.md` section 7).
 - `node scripts/demo.mjs init <dir> --figure --name <name>` writes a small
   working starter.
 
@@ -537,9 +540,10 @@ control); fake-looking data; a story that needs sound; captions faster than
   page in its own folder: the take is recorded again when any file in that
   folder changes, so a caption edit records nothing but a stylesheet edit
   does.
-- A figure page must not start its own idle tour, `requestAnimationFrame`
-  loop or timers when `window.__figureRecording` is true (the recorder sets
-  it). Otherwise two recordings of the same take differ.
+- A figure page with a hook must not start its own idle tour,
+  `requestAnimationFrame` loop or timers when `window.__figureRecording` is
+  true (the recorder sets it). Otherwise two recordings of the same take
+  differ. A page without a hook runs on the virtual clock, so its tour is fine.
 - The recorder draws no cursor on a figure take, so point at things with
   callouts on marks. (`figureSteps` moves exist only to drive a page in clock
   mode, where the page reads the pointer.)

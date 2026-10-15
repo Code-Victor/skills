@@ -288,47 +288,85 @@ What made the first explainer work, in general terms:
 
 ## 7. Clock mode
 
-A figure with no hook is still recordable. The recorder injects
-`scripts/figure-clock.js` before any page script runs and drives a virtual
-clock: figure time is virtual seconds since load, and the page's own loop (its
-idle tour) plays. Use it for an existing anatomy figure you do not want to
-edit, or when the motion is the tour itself. Marks must then come from the
-take's `marks`, since the page has none.
+A figure with no hook is still recordable: any anatomy figure as it comes.
+The recorder loads the page once to look for `window.__figure`. With none
+after a second, it adds `scripts/figure-clock.js` and loads the page again,
+so the clock is in place before any page script runs and the page only ever
+sees virtual time. The page's own loop (its idle tour) then plays, and
+`figureSteps` can steer it. Use it for an existing figure you do not want to
+edit, or when the motion is the tour itself. Marks come from the take's
+`marks` and mark steps, since the page has none.
 
-The clock virtualises everything that reads time:
+**Figure time** is virtual seconds since load. With `duration` it is the
+video second. With a `timeline` the curve drives the clock: a hold stops it,
+so the whole page holds (springs too, unlike hook mode); a steeper stretch
+runs the page faster; a timeline that starts after 0 plays the page that far
+before the first frame. The clock moves in steps of at most 1/60 s, so a
+figure's own dt clamp never slows its motion.
+
+What the clock drives:
 
 - `requestAnimationFrame` and `cancelAnimationFrame`
-- `performance.now()`, `Date.now()` and `new Date()` (a fixed date in 2026)
-- `setTimeout`, `setInterval`, their clear functions and `requestIdleCallback`
-- CSS animations and the Web Animations API
-- `Math.random`, seeded by `seed`
-- CSS transitions are switched off unless `"transitions": "on"`
+- `performance.now()`, `Date.now()` and `new Date()` (counted from 1 January
+  2026, so a video never shows the real date)
+- `setTimeout`, `setInterval`, their clear functions and
+  `requestIdleCallback`, fired in order at their virtual times
+- CSS animations, the Web Animations API and SVG (SMIL) animations: each
+  starts the first time the clock sees it and is set to virtual time
+- `Math.random`, from `seed` (default 1). The same seed gives the same video;
+  another seed gives another run of the same figure
+- CSS transitions are off (`"transitions": "off"`, the default), so a hover
+  or class change snaps. With `"on"` they run, on virtual time like
+  animations
 
-**`figureSteps`** are inputs at fixed video times, not in sequence:
+What it does not drive, so keep it out of a clock-mode figure:
+
+- **iframes.** Only the top page is virtual; a frame inside runs in real time.
+- **An animation the page pauses itself** with `pause()` or
+  `animation-play-state: paused` keeps playing: the clock pauses every
+  animation to set its time, so it cannot tell yours apart.
+- **`crypto.getRandomValues()` and `crypto.randomUUID()`** are not seeded.
+- **`event.timeStamp`** and **`document.timeline.currentTime`** stay real.
+- **Anything loaded after `load`** (a `fetch`, an image, a video, a worker)
+  arrives in real time, so the frame it lands on can change between runs.
+  The recorder waits for `load` and `document.fonts.ready` only. Keep the
+  page self-contained.
+
+**`figureSteps`** are input at fixed video seconds, not in sequence:
 
 ```json
 "figureSteps": [
   { "at": 2.0, "move": [0.30, 0.55] },
   { "at": 3.0, "move": [0.70, 0.55], "dur": 4.0 },
+  { "at": 8.0, "click": [0.5, 0.5] },
   { "at": 8.5, "key": "ArrowRight" },
-  { "at": 10.0, "click": [0.5, 0.5] },
-  { "at": 12.0, "mark": "drawer-open", "anchor": ".drawer" }
+  { "at": 12.0, "mark": "drawer-open", "anchor": ".drawer", "label": "The drawer opens" }
 ]
 ```
 
+- A step fires on the first frame whose video second reaches `at`.
 - Positions are fractions of the viewport.
-- A `move` with `dur` glides, with an ease in and out, once per frame.
-- Each step fires at the first frame whose video time reaches `at`.
-- No cursor is drawn. A `mark` step logs a mark event, as in hook mode.
+- A `move` jumps. With `dur` it glides from where the pointer was, once a
+  frame, with the same ease in and out as a cursor glide in a screen take.
+  The first move has nowhere to glide from, so it jumps.
+- A `click` moves there, then presses and releases the left button.
+- A `key` is a key down and up (`ArrowRight`, `End`, `Enter`). It goes to the
+  focused element, so click the figure first if it listens on its stage.
+- A `mark` step logs a mark event like any mark, with the box of its
+  `anchor` read once the frame has painted. `look: false` keeps the camera
+  off it.
+- No cursor is drawn, and clicks and keys are not logged as events, so the
+  camera does not chase them. Add a mark step where you want it to look.
 
 Limits:
 
 - **No seeking.** Frames run in order from load, so a clock-mode take is
   always recorded on one worker.
-- **The clock cannot fix randomness you did not seed**, such as a page that
-  fetches data. Keep the page self-contained.
 - **WebGL needs SwiftShader.** The recorder starts Chrome with it, so the
   pixels match between runs. Record on the recorder, not in your own browser.
+- **The viewport must hold the figure.** Anatomy pages are documents: some
+  are taller than 1080 px and only the top shows. The recorder warns when
+  the page is bigger than the viewport.
 - Check determinism before you trust it (section 9): record twice with
   `--hash-frames` and compare.
 
@@ -416,6 +454,11 @@ After recording:
   again. It skips files over 20 MB, dotfiles, Markdown, video files, events,
   take and sheet files, and any `demo.json`. Put the page in its own
   folder (`figure/`), and keep big assets out of it, or the hash is slow.
+- **A figure that does not change.** The recorder warns when frames stay
+  the same, byte for byte, for more than 2.5 s of video while figure time
+  moves: in hook mode `draw()` is not reading `t`; in clock mode the page is
+  waiting on something the clock does not drive (section 7). A hold, where
+  figure time stands still, never warns.
 - **The runner does not open a window.** A figure take uses its own
   headless Chrome, so it does not need `scripts/chrome.sh` and cannot use the
   person's logged-in session. It is for self-contained pages.

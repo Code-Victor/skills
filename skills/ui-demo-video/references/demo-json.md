@@ -290,33 +290,40 @@ keep its `capture` defaults.
 
 A figure take has two modes. When the page sets `window.__figure` (the hook
 contract in `figure.md`) the recorder calls it for each frame, with figure
-time read off the `timeline`. When it does not, the recorder runs the page on
-a virtual clock and the page's own loop plays; use `figureSteps` to give it
-input.
+time read off the `timeline`. When it does not, the recorder loads the page
+again on a virtual clock (`scripts/figure-clock.js`) and the page's own loop
+plays: figure time is then virtual seconds since load, `seed` seeds
+`Math.random`, `transitions` switches CSS transitions on, and `figureSteps`
+give it input. `figure.md` section 7 lists what the clock drives and what it
+does not (iframes, a page's own `pause()`, `crypto.getRandomValues`,
+`event.timeStamp`, `document.timeline.currentTime`).
 
 ### `figureSteps` (clock mode only)
 
-Steps happen at fixed video times, not in sequence. Each fires at the first
-frame whose video time reaches `at`:
+Steps happen at fixed video seconds, not in sequence. Each fires on the first
+frame whose video second reaches `at`. A page with a hook ignores them, with a
+warning.
 
 ```json
 "figureSteps": [
   { "at": 2.0, "move": [0.30, 0.55] },
   { "at": 3.0, "move": [0.70, 0.55], "dur": 4.0 },
+  { "at": 8.0, "click": [0.5, 0.5] },
   { "at": 8.5, "key": "ArrowRight" },
-  { "at": 10.0, "click": [0.5, 0.5] },
   { "at": 12.0, "mark": "drawer-open", "anchor": ".drawer" }
 ]
 ```
 
 | Step | Does |
 |---|---|
-| `{ "at", "move": [x, y] }` | Move the pointer to a point. Positions are fractions of the viewport. `"dur"` makes it glide, with an ease in and out, once per frame |
-| `{ "at", "key": "<name>" }` | Press a key, such as `ArrowRight` |
-| `{ "at", "click": [x, y] }` | Click at a point |
-| `{ "at", "mark": "<id>", "anchor"? }` | Log a mark event, as a `mark` step does |
+| `{ "at", "move": [x, y], "dur"? }` | Move the pointer to a point, in fractions of the viewport. Without `dur` it jumps. With `dur` it glides from where the pointer was, once a frame, with the cursor's ease in and out (the first move jumps: there is nowhere to glide from) |
+| `{ "at", "click": [x, y] }` | Move there, press and release the left button |
+| `{ "at", "key": "<name>" }` | Key down and up, such as `ArrowRight`. It goes to the focused element, so click first if the page listens on its stage |
+| `{ "at", "mark": "<id>", "anchor"?, "label"?, "look"? }` | Log a mark event at that frame, like a mark in `marks`. The anchor's box is read once the frame has painted |
 
-No cursor is drawn.
+One action a step. No cursor is drawn, and clicks and keys are not logged as
+events, so the camera does not follow them: add a mark step where it should
+look. A step after the take's end never happens (a warning).
 
 ## Scenes that use takes
 

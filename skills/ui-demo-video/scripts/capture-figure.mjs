@@ -8,14 +8,23 @@
 //     [--crf n] [--jpeg-quality n] [--encoder x264] [--draft] [--preview 2,8,20 --preview-dir <dir>]
 //     [--hash-frames <file>] [--workers n] [--json]
 //
-// The page keeps the figure contract (scripts/figure-hook.js): window.__figure
-// with frame(t, dt). Video frame i is at v = i / fps seconds and shows figure
-// time t, from --timeline (a monotone cubic through [[videoSec, figureT], ...])
-// or, with only --duration, running evenly over the figure's range. For each
-// frame the recorder calls frame(t, dt), waits for two painted frames, takes a
-// screenshot and streams it into ffmpeg (capture-encode.mjs: H.264, yuv420p,
-// TV range). Frames are stepped in order from load, with dt = 1/fps after the
-// first, so springs settle the same way on every run.
+// A figure runs in one of two modes, picked by the page:
+//   hook   the page keeps the figure contract (scripts/figure-hook.js):
+//          window.__figure with frame(t, dt). Video frame i is at v = i / fps
+//          seconds and shows figure time t, from --timeline (a monotone cubic
+//          through [[videoSec, figureT], ...]) or, with only --duration,
+//          running evenly over the figure's range. For each frame the recorder
+//          calls frame(t, dt), with dt = 1/fps after the first, so springs
+//          settle the same way on every run.
+//   clock  the page has no hook (any anatomy figure as it comes). The recorder
+//          installs figure-clock.js before the page's own scripts and loads it
+//          again, so the page's own loop runs on a virtual clock: figure time
+//          is virtual seconds since load (the video second, or --timeline),
+//          and timers, rAF, Date, performance.now, CSS and Web Animations and
+//          a seeded Math.random all follow it. --steps drive it with timed
+//          pointer and key input.
+// Either way each frame then waits for two painted frames, is screenshot and
+// streamed into ffmpeg (capture-encode.mjs: H.264, yuv420p, TV range).
 //
 // It runs its own headless Chrome on a throwaway profile, removed when it
 // exits, whatever happens: no window, no focus change, nothing left on a port.
@@ -38,6 +47,10 @@
 //   --duration <sec>       the length when there is no timeline
 //   --marks <json>         marks [{ id, t, anchor?, label?, poster?, look? }] in
 //                          figure time, added to the page's (these win on an id)
+//   --steps <json>         clock mode: timed input, [{ at: <video sec>, move |
+//                          click: [x, y] fractions, dur?, key, mark, anchor?, label?, look? }]
+//   --seed 1               clock mode: the seed for Math.random
+//   --transitions off      clock mode: CSS transitions off (default) or on
 //   --draft                quick review frames: 30 fps, dpr 1, JPEG quality 80
 //   --preview 2,8,20       step through, but only save PNG stills at these video
 //                          seconds into --preview-dir; nothing is encoded
@@ -46,11 +59,14 @@
 //   --crf 14 --jpeg-quality 95 --encoder x264   as capture.mjs
 //   --allow-temp           allow --out under /tmp or a session scratchpad
 //   --json                 print a one-line JSON summary instead of the last line
-//   --timeline and --marks (and --steps) take inline JSON or a JSON file.
+//   --timeline, --marks and --steps take inline JSON or a JSON file.
 //
-// Not written yet: clock mode (a page with no hook, run on a virtual clock,
-// with --steps, --seed and --transitions) and --workers (seekable figures in
-// several tabs at once). Both plug into the mode object and frame loop below.
+// A recording warns when its frames stay byte for byte the same for more than
+// 2.5 s of video while figure time moves: the page is not drawing from the
+// time it is given. A hold (figure time standing still) never warns.
+//
+// Not written yet: --workers (seekable figures in several tabs at once). It
+// plugs into the frame loop below.
 
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -82,7 +98,8 @@ for (let i = 0; i < argv.length; i++) {
 
 const USAGE = `Usage:
   capture-figure.mjs --page <file.html> --out <clip.mp4> [--viewport 1920x1080] [--dpr 1.5] [--fps 60]
-    (--timeline <json> | --duration <sec>) [--marks <json>] [--draft] [--hash-frames <file>] [--json]
+    (--timeline <json> | --duration <sec>) [--marks <json>] [--steps <json>] [--seed n] [--transitions off|on]
+    [--draft] [--hash-frames <file>] [--json]
   capture-figure.mjs --page <file.html> (--timeline <json> | --duration <sec>) --preview 2,8,20 --preview-dir <dir>
 Read the top of this file for every option.`;
 const usage = (msg) => {
@@ -141,6 +158,17 @@ if (!Array.isArray(argMarks) || !argMarks.every((m) => m && typeof m.id === 'str
   usage('--marks must be [{ "id": "name", "t": <figure time> }, ...]');
 const figureSteps = jsonArg('steps') ?? [];
 if (!Array.isArray(figureSteps)) usage('--steps must be a list of { "at": <sec>, ... }');
+const fraction = (p) => Array.isArray(p) && p.length === 2 && p.every((n) => typeof n === 'number' && n >= 0 && n <= 1);
+figureSteps.forEach((s, j) => {
+  const at = `--steps item ${j} (${JSON.stringify(s)})`;
+  if (!s || typeof s !== 'object' || !(typeof s.at === 'number' && s.at >= 0)) usage(`${at} needs "at", the video second it happens`);
+  const acts = ['move', 'click', 'key', 'mark'].filter((k) => k in s);
+  if (acts.length !== 1) usage(`${at} needs one of move, click, key or mark`);
+  if (('move' in s && !fraction(s.move)) || ('click' in s && !fraction(s.click))) usage(`${at}: move and click are [x, y] in fractions of the viewport, like [0.3, 0.55]`);
+  if ('key' in s && !(typeof s.key === 'string' && s.key)) usage(`${at}: key is a key name, like "ArrowRight"`);
+  if ('mark' in s && !(typeof s.mark === 'string' && s.mark)) usage(`${at}: mark is the mark's id`);
+  if ('dur' in s && !(typeof s.dur === 'number' && s.dur >= 0)) usage(`${at}: dur is seconds`);
+});
 const seed = num('seed', 1, Number.isInteger, 'a whole number');
 const transitions = String(args.transitions ?? 'off');
 if (!['off', 'on'].includes(transitions)) usage(`--transitions must be off or on (got ${transitions})`);
@@ -374,12 +402,13 @@ const detectMode = async () => {
 // ---------------------------------------------------------------- modes
 
 // A mode drives the page through the frames:
-//   prepare()       once the page has loaded: check it, return { range, marks, seekable }
-//   advance(t, dt)  put figure time t on the page (dt: video seconds since the last frame)
-//   paint()         resolve once that frame is on screen, ready for a screenshot
-// Hook mode calls the page's own window.__figure. Clock mode (no hook; the
-// page's own loop runs on a virtual clock that figure-clock.js installs before
-// the page loads, and advance() moves it on) is the other one to add here.
+//   prepare()          once the page has loaded: check it, return { range, marks, seekable }
+//   advance(t, dt, v)  put figure time t on the page (dt: video seconds since the
+//                      last frame; v: this frame's video second)
+//   paint()            resolve once that frame is on screen, ready for a screenshot
+// Hook mode calls the page's own window.__figure. Clock mode (no hook) runs
+// the page's own loop on a virtual clock that figure-clock.js installs before
+// the page loads; advance() moves it on.
 const READY_MS = 20000;
 const hookMode = {
   name: 'hook',
@@ -404,7 +433,99 @@ const hookMode = {
   advance: (t, dt) => evaluate(`Promise.resolve(window.__figure.frame(${t}, ${dt})).then(() => true)`, `window.__figure.frame(${t}, ${dt})`),
   paint: () => evaluate('new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))', 'paint'),
 };
-const MODES = { hook: hookMode };
+
+// Clock mode: figure-clock.js replaces the page's time sources (rAF, timers,
+// performance.now, Date, Math.random, CSS and Web Animations) before any
+// page script runs, so the page is loaded again with it. Virtual time starts
+// at 1000 ms, so figure time t (virtual seconds since load) is 1000 + 1000 t.
+const CLOCK_SOURCE = readFileSync(new URL('./figure-clock.js', import.meta.url), 'utf8');
+
+// figureSteps: input at fixed video seconds. A step fires on the first frame
+// whose video second reaches its `at`. A move with `dur` glides once a frame,
+// with capture.mjs's ease, from where the pointer was (a first move, with
+// nothing before it, jumps). A click is a move, a press and a release; a key
+// is a key down and up. No cursor is drawn. Mark steps are logged with the
+// other marks (see main).
+const ease = (k) => (k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2);
+const figureInput = () => {
+  const todo = figureSteps.map((s, i) => ({ ...s, i })).filter((s) => !('mark' in s)).sort((a, b) => a.at - b.at || a.i - b.i);
+  let pos = null;
+  let glide = null;
+  const mouse = (type, [x, y]) => tab.send('Input.dispatchMouseEvent', {
+    type, x, y, button: type === 'mouseMoved' ? 'none' : 'left', clickCount: type === 'mouseMoved' ? 0 : 1,
+  });
+  const px = ([fx, fy]) => [fx * vw, fy * vh];
+  // Sends what is due at video second v. True when it sent anything.
+  return async (v) => {
+    let sent = false;
+    while (todo.length && todo[0].at <= v + 1e-9) {
+      const s = todo.shift();
+      if (s.move) {
+        const to = px(s.move);
+        if (s.dur > 0 && pos) glide = { from: pos, to, at: s.at, dur: s.dur };
+        else {
+          glide = null;
+          pos = to;
+          await mouse('mouseMoved', pos);
+          sent = true;
+        }
+      } else if (s.click) {
+        glide = null;
+        pos = px(s.click);
+        await mouse('mouseMoved', pos);
+        await mouse('mousePressed', pos);
+        await mouse('mouseReleased', pos);
+        sent = true;
+      } else if (s.key) {
+        await tab.send('Input.dispatchKeyEvent', { type: 'keyDown', key: s.key });
+        await tab.send('Input.dispatchKeyEvent', { type: 'keyUp', key: s.key });
+        sent = true;
+      }
+    }
+    if (glide) {
+      const k = ease(Math.min(1, Math.max(0, (v - glide.at) / glide.dur)));
+      pos = [glide.from[0] + (glide.to[0] - glide.from[0]) * k, glide.from[1] + (glide.to[1] - glide.from[1]) * k];
+      await mouse('mouseMoved', pos);
+      sent = true;
+      if (v >= glide.at + glide.dur - 1e-9) glide = null;
+    }
+    return sent;
+  };
+};
+
+let input = null;
+let clockMs = 1000;
+const clockMode = {
+  name: 'clock',
+  async prepare() {
+    // A background tab is hidden, even headless, and a hidden page gets no
+    // real frames: no paint() and no IntersectionObserver. This Chrome is
+    // headless and ours alone, so nothing rises and no focus moves.
+    await tab.send('Page.bringToFront');
+    await tab.send('Page.addScriptToEvaluateOnNewDocument', {
+      source: `window.__vclockConfig = ${JSON.stringify({ seed, transitions })};\n${CLOCK_SOURCE}`,
+    });
+    await loadPage();
+    if (!(await evaluate("typeof window.__vclock?.advanceTo === 'function'"))) return die('the virtual clock (figure-clock.js) did not install in the page');
+    if (await evaluate("typeof window.__figure?.frame === 'function'"))
+      return die(`${basename(page)} set window.__figure more than a second after it loaded, so it was taken for a page without a hook. Call figureHook() as the page loads.`);
+    // Two real frames before the first: the IntersectionObserver that starts
+    // an anatomy figure's loop has reported by then.
+    await clockMode.paint();
+    input = figureInput();
+    return { range: null, marks: [], seekable: false };
+  },
+  async advance(t, dt, v) {
+    // Input first. Chrome hands pointer input to the page with its next real
+    // frame, so one is painted before time moves on.
+    if (await input(v)) await clockMode.paint();
+    clockMs = Math.max(clockMs, 1000 + t * 1000);
+    await evaluate(`window.__vclock.advanceTo(${clockMs})`, `__vclock.advanceTo(${clockMs})`);
+  },
+  paint: () => evaluate('window.__vclock.paint().then(() => true)', 'paint'),
+  stats: () => evaluate('window.__vclock.stats()', '__vclock.stats()'),
+};
+const MODES = { hook: hookMode, clock: clockMode };
 
 // ---------------------------------------------------------------- frames
 
@@ -448,8 +569,9 @@ const anchorBox = async (m) => {
 const W = Math.round((vw * dpr) / 2) * 2, H = Math.round((vh * dpr) / 2) * 2;
 
 // Step every frame in order. Recording: paint, screenshot and encode each one.
-// Preview: paint and save a PNG only at the asked-for seconds. Parallel capture
-// would run this loop over a contiguous range of frames in each of several tabs.
+// Preview: paint and save a PNG only at the asked-for seconds (clock mode
+// still paints wherever input goes in). Parallel capture would run this loop
+// over a contiguous range of frames in each of several tabs.
 const runFrames = async ({ mode, times, due }) => {
   const N = times.length;
   const events = [];
@@ -462,7 +584,7 @@ const runFrames = async ({ mode, times, due }) => {
   let shown = t0;
   for (let i = 0; i <= last; i++) {
     const v = i / fps;
-    await mode.advance(times[i], i === 0 ? 0 : 1 / fps);
+    await mode.advance(times[i], i === 0 ? 0 : 1 / fps, v);
     if (PREVIEW && !wanted.has(i)) continue;
     await mode.paint();
     for (const m of due.get(i) ?? []) {
@@ -478,7 +600,8 @@ const runFrames = async ({ mode, times, due }) => {
       if (size && (Math.abs(size[0] - vw * dpr) > 2 || Math.abs(size[1] - vh * dpr) > 2))
         warn(`frames are ${size[0]}x${size[1]}, not ${Math.round(vw * dpr)}x${Math.round(vh * dpr)} (viewport ${vw}x${vh} at ${dpr}x); this Chrome ignores the scale`);
     }
-    if (hashFile) hashes.push(createHash('sha1').update(buf).digest('hex'));
+    // Every frame is hashed (it is cheap): --hash-frames and the freeze check read them.
+    hashes.push(createHash('sha1').update(buf).digest('hex'));
     if (PREVIEW) {
       const file = join(previewDir, `preview-${wanted.get(i)}s.png`);
       writeFileSync(file, buf);
@@ -490,6 +613,39 @@ const runFrames = async ({ mode, times, due }) => {
     }
   }
   return { events, hashes, loopMs: Date.now() - t0, stepped: last + 1 };
+};
+
+// A figure that stops changing while its time moves on is not drawing from
+// that time (hook mode: draw() reads something else; clock mode: the page
+// waits on something the clock does not drive). Runs of byte-identical frames
+// are measured in the video seconds where figure time moved, so a hold, where
+// figure time stands still, never counts.
+const FROZEN_SEC = 2.5;
+const frozenRuns = (hashes, times) => {
+  const runs = [];
+  let from = 0;
+  let moving = 0;
+  for (let i = 1; i <= hashes.length; i++) {
+    if (i < hashes.length && hashes[i] === hashes[i - 1]) {
+      if (times[i] > times[i - 1] + 1e-9) moving++;
+      continue;
+    }
+    if (moving / fps > FROZEN_SEC) runs.push([from, i - 1]);
+    from = i;
+    moving = 0;
+  }
+  return runs;
+};
+const warnFrozen = (hashes, times, clock) => {
+  const runs = frozenRuns(hashes, times);
+  const sec = (i) => +(i / fps).toFixed(2);
+  const fig = (i) => +times[i].toFixed(3);
+  for (const [a, b] of runs.slice(0, 3)) {
+    warn(clock
+      ? `the figure did not change from ${sec(a)}s to ${sec(b)}s although its clock ran (figure time ${fig(a)} to ${fig(b)}): is the page waiting on something the virtual clock does not drive (an iframe, its own pause, input)? To hold it on purpose, repeat a figure time in the timeline`
+      : `the figure did not change from ${sec(a)}s to ${sec(b)}s although its time moved (figure time ${fig(a)} to ${fig(b)}): is draw() reading the time?`);
+  }
+  if (runs.length > 3) warn(`and ${runs.length - 3} more stretch(es) where the figure did not change although its time moved`);
 };
 
 // ---------------------------------------------------------------- run
@@ -509,23 +665,27 @@ const main = async () => {
   await loadPage();
   const modeName = await detectMode();
   const mode = MODES[modeName];
-  if (!mode)
-    return die(`${basename(page)} has no window.__figure hook, and recording a page without one (clock mode, on a virtual clock) is not implemented yet. Call figureHook() from scripts/figure-hook.js in the page.`);
   const info = await mode.prepare();
-  if (figureSteps.length) warn(`figureSteps only drive a page without a hook (clock mode); this page has one, so its ${figureSteps.length} step(s) are ignored`);
+  const clock = mode === clockMode;
+  if (figureSteps.length && !clock) warn(`figureSteps only drive a page without a hook (clock mode); this page has one, so its ${figureSteps.length} step(s) are ignored`);
 
   // Figure time for every frame: the timeline, else evenly over the range so the
-  // last frame shows the end.
+  // last frame shows the end (clock mode: the video second).
   const N = Math.max(1, Math.round(lengthSec * fps));
   const curve = timeline ? monotone(timeline) : null;
-  const span = info.range[1] - info.range[0];
-  const lastV = Math.max(1, N - 1) / fps;
-  const times = Array.from({ length: N }, (_, i) => (curve ? curve(i / fps) : info.range[0] + span * Math.min(1, i / fps / lastV)));
-  if (timeline) {
-    const lo = Math.min(...timeline.map((p) => p[1])), hi = Math.max(...timeline.map((p) => p[1]));
-    if (lo < info.range[0] - 1e-9 || hi > info.range[1] + 1e-9)
-      warn(`the timeline runs figure time ${lo} to ${hi}, outside the page's range [${info.range.join(', ')}]`);
+  let times;
+  if (clock) times = Array.from({ length: N }, (_, i) => (curve ? curve(i / fps) : i / fps));
+  else {
+    const span = info.range[1] - info.range[0];
+    const lastV = Math.max(1, N - 1) / fps;
+    times = Array.from({ length: N }, (_, i) => (curve ? curve(i / fps) : info.range[0] + span * Math.min(1, i / fps / lastV)));
+    if (timeline) {
+      const lo = Math.min(...timeline.map((p) => p[1])), hi = Math.max(...timeline.map((p) => p[1]));
+      if (lo < info.range[0] - 1e-9 || hi > info.range[1] + 1e-9)
+        warn(`the timeline runs figure time ${lo} to ${hi}, outside the page's range [${info.range.join(', ')}]`);
+    }
   }
+  const range = info.range ?? [+times[0].toFixed(3), +times.at(-1).toFixed(3)];
 
   // Marks: the page's, then --marks (they win on the same id). Each fires on the
   // first frame whose figure time reaches it.
@@ -539,6 +699,17 @@ const main = async () => {
   }
   const posters = [...marks.values()].filter((m) => m.poster === true);
   if (posters.length > 1) warn(`${posters.length} marks say poster: true (${posters.map((m) => m.id).join(', ')}); the first is the poster`);
+  // Clock mode's steps fire on the first frame whose video second reaches them;
+  // a mark step is logged there like any mark.
+  if (clock) {
+    for (const s of figureSteps) {
+      const i = times.findIndex((_, k) => s.at <= k / fps + 1e-9);
+      if (i < 0) { warn(`the figure step at ${s.at}s comes after the last frame (${((N - 1) / fps).toFixed(2)}s), so it never happens`); continue; }
+      if (!('mark' in s)) continue;
+      if (marks.has(s.mark)) warn(`mark "${s.mark}" is both in marks and a figure step; both are logged`);
+      due.set(i, [...(due.get(i) ?? []), { id: s.mark, anchor: s.anchor, label: s.label, look: s.look }]);
+    }
+  }
 
   const r = await runFrames({ mode, times, due });
   if (hashFile) {
@@ -546,9 +717,13 @@ const main = async () => {
     writeFileSync(hashFile, `${r.hashes.join('\n')}\n`);
   }
   const msPerFrame = +(r.loopMs / r.stepped).toFixed(1);
+  // What the page asked of the virtual clock (timers, random numbers, animations).
+  const clockStats = clock ? await clockMode.stats() : null;
   if (PREVIEW)
     return succeed(`saved ${previewAt.length} still(s) in ${previewDir} (stepped ${r.stepped} frames, ${msPerFrame} ms a frame, wall ${wallSec().toFixed(1)}s)`,
-      { preview: previewAt.map((s) => join(previewDir, `preview-${s}s.png`)), frames: r.stepped, msPerFrame, mode: mode.name });
+      { preview: previewAt.map((s) => join(previewDir, `preview-${s}s.png`)), frames: r.stepped, msPerFrame, mode: mode.name, ...(clockStats ? { clock: clockStats } : {}) });
+  warnFrozen(r.hashes, times, clock);
+  const distinct = new Set(r.hashes).size;
 
   await sink.finish(lengthSec);
   renameSync(tmpOut, out);
@@ -558,17 +733,18 @@ const main = async () => {
   const eventsTmp = `${eventsFile}.${process.pid}.tmp`;
   writeFileSync(eventsTmp, `${JSON.stringify({
     width: W, height: H, duration: lengthSec, fps, slow: 1, events: r.events, cursor: [],
-    figure: { mode: mode.name, range: info.range, timeline, dpr, viewport: [vw, vh], draft: DRAFT, seekable: info.seekable },
+    figure: { mode: mode.name, range, timeline, dpr, viewport: [vw, vh], draft: DRAFT, seekable: info.seekable, ...(clock ? { seed, transitions } : {}) },
   }, null, 1)}\n`);
   renameSync(eventsTmp, eventsFile);
   say(`events ${eventsFile} (${r.events.length} marks)`);
   const sheet = writeSheet(out, lengthSec);
   say(`sheet ${sheet}`);
   await succeed(
-    `saved ${out} (${W}x${H}, ${lengthSec}s, ${N} frames at ${fps} fps, ${msPerFrame} ms a frame, ${(bytes / 1e6).toFixed(1)} MB, wall ${wallSec().toFixed(1)}s)`,
+    `saved ${out} (${mode.name} mode, ${W}x${H}, ${lengthSec}s, ${N} frames at ${fps} fps, ${distinct} distinct, ${msPerFrame} ms a frame, ${(bytes / 1e6).toFixed(1)} MB, wall ${wallSec().toFixed(1)}s)`,
     {
-      file: out, events: eventsFile, sheet, width: W, height: H, durationSec: lengthSec, fps, frames: N,
+      file: out, events: eventsFile, sheet, width: W, height: H, durationSec: lengthSec, fps, frames: N, distinctFrames: distinct,
       msPerFrame, mode: mode.name, draft: DRAFT, dpr, marks: r.events.length, bytes, ...(hashFile ? { hashes: hashFile } : {}),
+      ...(clockStats ? { clock: clockStats } : {}),
     },
   );
 };
