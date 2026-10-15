@@ -1,0 +1,38 @@
+{
+  "_note": "An explainer in the demo.json format: a figure page recorded frame by frame, with captions timed to its marks. Run: node scripts/demo.mjs examples/explainer.demo.json (copy this file and the figure/ folder out of the skill first, into a folder that survives a restart). Everything here is made up: the build steps, the timings and the figure.",
+  "name": "parallel-build",
+  "style": "studio",
+  "takes": {
+    "bench": {
+      "source": "figure",
+      "page": "figure/bench.html",
+      "_timeline": "Video seconds to figure time (figure seconds are build seconds, 0 to 223). Slow while the machines set up, quick through the long compile, slow again at each mark, then a hold on the finished bench.",
+      "marks": [
+        { "id": "serial-done", "t": 220, "anchor": "[data-gate=\"serial\"]", "label": "Serial run done: 3:40", "look": false },
+        { "id": "saved", "t": 223, "anchor": "[data-part=\"saved\"]", "label": "1 m 30 s saved", "poster": true, "look": false }
+      ],
+      "timeline": [[0, 0], [2.5, 0], [7, 30], [9, 36], [13.5, 100], [15.5, 119], [17, 125], [20, 130], [22.5, 133], [24, 133], [28.5, 200], [30, 214], [31.5, 220], [34, 223], [39, 223]]
+    }
+  },
+  "transition": "zoom-blur",
+  "transitionSec": 0.5,
+  "scenes": [
+    { "type": "title", "text": "A build on three machines", "subtitle": "One machine, or three side by side", "durationSec": 3.4 },
+    {
+      "type": "clip", "take": "bench", "durationSec": 39,
+      "autoCamera": { "zoom": 1.5, "maxZoom": 1.5 },
+      "captions": [
+        { "atMark": "setup-done", "text": "Each machine starts and installs first." },
+        { "atMark": "checks-done", "text": "Lint, types and tests finish at 2:05." },
+        { "atMark": "gate-open", "text": "The compile lane sets the finish: 2:10." },
+        { "atMark": "serial-done", "leadSec": 1, "text": "One machine running every step: 3:40." },
+        { "atMark": "saved", "text": "The empty bench is the 1 m 30 s saved." }
+      ],
+      "callouts": [{ "mark": "gate-open", "label": "Parallel run done" }]
+    },
+    {
+      "type": "list", "title": "What the bench showed", "durationSec": 5,
+      "items": ["Parallel finished at 2:10", "Serial finished at 3:40", "1 m 30 s saved on every build"]
+    }
+  ]
+}

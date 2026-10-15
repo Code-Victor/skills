@@ -59,7 +59,7 @@ Make the still with `node scripts/capture.mjs shot --url <u> --out
 |---|---|
 | `aspect` | The recording's width / height. Leave it out: the runner sets it from the take, and for a file given by `src` the renderer reads it from the file. Write it only to force a different shape |
 | `tag`, `caption` | One caption with a label ("Before", "After"). Where it sits and how it enters depend on the style (see Captions) |
-| `captions` | `[{ "atSec", "text", "tag"? }]`: several in turn, for a scene that walks through steps. Each shows until the next |
+| `captions` | `[{ "atSec" or "atMark", "leadSec"?, "text", "tag"? }]`: several in turn, for a scene that walks through steps. Each shows until the next. `atMark` times a caption to a mark (see Captions at marks) |
 | `autoCamera` | `true` or options: let `scripts/auto-camera.mjs` write `moves` from the take's events file |
 | `moves` | Camera keyframes `{ atSec, x, y, zoom }` (x, y = focus as fractions of the recording) |
 | `camera` | `"fill"` (a zoom grows the whole window until the recording fills the frame) or `"inside"` (the zoom crops inside a fixed window). Default: the spec's top-level `camera`, else the style's (`studio` and `midnight` fill). Clip and image scenes; no effect on `frame: "full"` |
@@ -158,6 +158,34 @@ changes it (`styles.md`).
   check counts from the caption's start, not from its last word.
 - `demo.mjs` lists a caption that is too fast or too short in its summary;
   fix the text or give the scene more time.
+
+### Captions at marks
+
+A caption can name a mark of the take instead of a time. It is the same
+mark a callout uses: a `mark` step in a screen take, or a mark of a figure
+take (`figure.md`).
+
+```json
+{ "atMark": "gate-open", "leadSec": 0.6, "text": "The gate opens once every lane is done." }
+```
+
+- Give `atMark` or `atSec`, not both: both in `demo.json` is an error. (The
+  resolved `build/video.json` has both, because the runner adds `atSec`.)
+  `leadSec` without `atMark` is a warning, and it must be 0 or more.
+- `leadSec` is how far ahead of the mark the caption appears. It defaults to
+  0.6. Use 0.5 to 1.5 so the viewer reads the line, then sees it happen.
+- The runner turns it into `atSec`: the mark's time in the scene, minus
+  `leadSec`, never below 0. `auto-camera.mjs` does this in the `camera`
+  stage, with the same mark lookup as callouts, so a trim, a `playbackRate` or
+  a change to the take's timeline moves the caption with the mark.
+- An unknown mark is a warning while `demo.json` is validated, because the
+  take may not be recorded yet. The check looks in the take's `marks`,
+  `figureSteps` and mark `steps`, in a recording already made, and, for a figure
+  take, for the id written in quotes in the page or a script beside it. Once
+  the clip is recorded it is an error, from the `check` stage, and the message
+  lists the marks the recording has: `the recording has no mark "x" (its marks:
+  a, b)`. `auto-camera.mjs` also prints `no such mark` and leaves `atSec` unset.
+- The reading checks above apply to the resolved time.
 
 ## Emphasis
 

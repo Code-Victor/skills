@@ -1,6 +1,6 @@
 ---
 name: ui-demo-video
-description: Make product videos of a web app that look professionally edited (bug-fix before/afters with the reported issue, feature tours, changelogs, PR, Slack and team demos) from real recordings, in minutes. One demo.json holds the takes and the scenes, and one command rehearses, records, directs, renders and delivers. Records in a background browser (no window, no focus change) at 2x and true 60fps, with a cursor that changes shape and ripples on click, human typing and blur for private data. An auto-camera zooms the way Screen Studio does, from what happened in each take. Scenes include issue cards, side-by-side comparisons, timed captions, callouts, screenshots, end cards, music and narration. Renders the whole video on the GPU in seconds, then delivers a PR-sized copy, captions, chapters, a poster and an automated check. Use when asked for a demo video, before/after video, screen recording, walkthrough, GIF or mp4 of UI work, a video for Slack, a PR or the team, or to make an existing recording look better.
+description: Make product videos of a web app that look professionally edited (bug-fix before/afters with the reported issue, feature tours, changelogs, PR, Slack and team demos) from real recordings, in minutes. One demo.json holds the takes and the scenes, and one command rehearses, records, directs, renders and delivers. Records in a background browser (no window, no focus change) at 2x and true 60fps, with a cursor that changes shape and ripples on click, human typing and blur for private data. An auto-camera zooms the way Screen Studio does, from what happened in each take. Scenes include issue cards, side-by-side comparisons, timed captions, callouts, screenshots, end cards, music and narration. Renders the whole video on the GPU in seconds, then delivers a PR-sized copy, captions, chapters, a poster and an automated check. Use when asked for a demo video, before/after video, screen recording, walkthrough, GIF or mp4 of UI work, an explainer video from an animated figure, a video for Slack, a PR or the team, or to make an existing recording look better.
 license: MIT
 metadata:
   author: Hamzat Victor (@Code-Victor)
@@ -61,6 +61,8 @@ References, read when the task reaches them:
   them on your demo, overriding a token.
 - `references/craft.md`: the research behind the defaults (pacing, before /
   after formats, delivery limits, anti-patterns), with sources.
+- `references/figure.md`: explainer videos from animated anatomy figures:
+  the page contract, the take keys, pacing, figure craft.
 - `references/remotion-remocn.md`: the optional Remotion renderer, for a
   tilted 3D product shot.
 
@@ -81,6 +83,7 @@ Write the story first, in beats. Pick the shape:
 | **Feature tour** | Title, one clip per capability, end card | 45 to 60 s |
 | **Changelog** | Title, a short clip per change, a list end card | 30 to 60 s |
 | **Comparison** | Split scenes of old and new pages, then the detail | 30 to 45 s |
+| **Explainer** | Title (optional), figure clip with captions at marks, list end card | 30 to 45 s |
 
 For each beat note: URL, what the cursor does, how long it needs, the caption.
 Rules that hold for every shape:
@@ -109,6 +112,38 @@ The video shows whatever the app shows. Before recording:
 - External effects (emails, invitations, webhooks) are real, and a rehearsal
   really clicks. Use a plus address the person owns (`name+demo@...`), reset
   in `setup`, or give the take `"rehearse": false`, and clean up afterwards.
+
+## Explainer videos (anatomy figures)
+
+When the story is how something works (a build, a pipeline, a queue) and
+not what a screen does, record an animated figure instead of an app. The
+figure is an isometric SVG page made with the third-party `anatomy` skill
+(`npx skills add wheresryan22/anatomy`). It is recorded frame by frame into a
+normal clip, so styles, captions, callouts, the auto-camera and delivery all
+work on it. `references/figure.md` is the whole guide; read it first.
+
+A figure take replaces `url` and `steps` with a page and a timeline:
+
+```json
+"takes": { "bench": { "source": "figure", "page": "figure/bench.html",
+                      "timeline": [[0, 0], [7, 30], [20, 130], [34, 223], [39, 223]] } }
+```
+
+- **Tell the person the estimate first.** Anatomy's sizes: a "Figure" (40 to
+  80 parts, one idea) takes 30 to 90 minutes to draw, a "Hero" (a rich scene,
+  some 3D) 2 to 4 hours. Recording a 40 s video takes a few minutes.
+- **Numbers before drawing.** Put the real figures, with their source, in a
+  `model.mjs` and draw to scale.
+- **Captions go on marks**, not seconds: `{ "atMark": "gate-open", "text":
+  "..." }` shows the caption 0.6 s ahead of that moment, and stays in step
+  when you change the pacing (`leadSec` changes the lead).
+- **Review with `--draft`**: `node scripts/demo.mjs <demo.json> --draft`
+  records figure takes at 30 fps and low resolution. The next run without
+  the flag records them again at full quality.
+- **Pace with the figure.** 30 to 45 s, slow into each event, hold the end,
+  and keep something moving past the halfway point. One idea per caption.
+- `node scripts/demo.mjs init <dir> --figure --name <name>` writes a small
+  working starter.
 
 ## 2. The browser, and scouting
 
@@ -496,6 +531,18 @@ control); fake-looking data; a story that needs sound; captions faster than
 - A clip that isn't one of this skill's recordings (another codec, a variable
   frame rate) is converted once to a proxy before rendering; the first render
   with it is slower.
+- A figure take uses its own headless Chrome, so it needs no
+  `scripts/chrome.sh` and no login, and `url`, `steps`, `setup`, `width`,
+  `height` and the other screen-recording options are errors on it. Put the
+  page in its own folder: the take is recorded again when any file in that
+  folder changes, so a caption edit records nothing but a stylesheet edit
+  does.
+- A figure page must not start its own idle tour, `requestAnimationFrame`
+  loop or timers when `window.__figureRecording` is true (the recorder sets
+  it). Otherwise two recordings of the same take differ.
+- The recorder draws no cursor on a figure take, so point at things with
+  callouts on marks. (`figureSteps` moves exist only to drive a page in clock
+  mode, where the page reads the pointer.)
 - Chrome refuses remote debugging on the profile the person is using. Never
   point `PROFILE` at their live one; log in through `chrome.sh --login`.
 
