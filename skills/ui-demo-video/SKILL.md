@@ -121,6 +121,7 @@ figure is an isometric SVG page made with the third-party `anatomy` skill
 (`npx skills add wheresryan22/anatomy`). It is recorded frame by frame into a
 normal clip, so styles, captions, callouts, the auto-camera and delivery all
 work on it. `references/figure.md` is the whole guide; read it first.
+`node scripts/demo.mjs init <dir> --figure --name <name>` writes a starter.
 
 A figure take replaces `url` and `steps` with a page and a timeline:
 
@@ -137,9 +138,8 @@ A figure take replaces `url` and `steps` with a page and a timeline:
 - **Captions go on marks**, not seconds: `{ "atMark": "gate-open", "text":
   "..." }` shows the caption 0.6 s ahead of that moment, and stays in step
   when you change the pacing (`leadSec` changes the lead).
-- **Review with `--draft`**: `node scripts/demo.mjs <demo.json> --draft`
-  records figure takes at 30 fps and low resolution. The next run without
-  the flag records them again at full quality.
+- **Review with `--draft`** (`demo.mjs <demo.json> --draft`): figure takes
+  record at 30 fps and low resolution. The next full run records them again.
 - **Pace with the figure.** 30 to 45 s, slow into each event, hold the end,
   and keep something moving past the halfway point. One idea per caption,
   and a mark for each idea, so no caption outlives what it says.
@@ -151,8 +151,6 @@ A figure take replaces `url` and `steps` with a page and a timeline:
 - **A page with no hook still records**, on a virtual clock: its own idle
   tour plays, the same on every run, and `figureSteps` can steer it with
   timed pointer and key input (`references/figure.md` section 7).
-- `node scripts/demo.mjs init <dir> --figure --name <name>` writes a small
-  working starter.
 
 ## 2. The browser, and scouting
 

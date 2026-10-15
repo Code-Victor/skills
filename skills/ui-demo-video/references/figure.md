@@ -61,9 +61,10 @@ Most explainers need a Figure. The recording is cheap next to the drawing: a
 
    It steps every frame but saves only a still at each listed second
    (`preview-2s.png`, `preview-7s.png` and so on, in `--preview-dir`), and
-   encodes nothing: a sketch sheet in a fraction of a recording. Show it, fix the beats, then run
-   `node scripts/demo.mjs <demo.json> --draft` for review rounds: 30 fps,
-   lower resolution, much faster (section 8). Collect every fix, edit once.
+   encodes nothing: a sketch sheet in a fraction of a recording. Show it,
+   fix the beats, then run `node scripts/demo.mjs <demo.json> --draft` for
+   review rounds: 30 fps, lower resolution, much faster (section 8). Collect
+   every fix, edit once.
 6. **The final run.** `node scripts/demo.mjs <demo.json>` with no flag. A
    draft take is recorded again at full quality, because the draft flag is
    part of the take's fingerprint.
@@ -98,8 +99,8 @@ window.__figure = {
 };
 ```
 
-- **`range`** is in the figure's own units: CI seconds, turns, anything. The
-  take's `timeline` maps video seconds to it.
+- **`range`** is in the figure's own units: seconds of a build, turns of a
+  wheel, anything. The take's `timeline` maps video seconds to it.
 - **`frame(t, dt)`** is called in non-decreasing `t`. **`dt` is real video
   seconds since the previous frame**: `1/fps` for every frame after the
   first, and `0` on the first frame. It is still called during holds, when
@@ -164,7 +165,7 @@ The worked example is `examples/figure/`: `model.mjs` (the numbers),
 `build.mjs` (builds `bench.html` with anatomy's kit), `bench.html` (the built
 page) and `NOTICE.md` (anatomy's licence, because the page inlines its kit).
 Its hook call is one line near the end of `bench.html`: `range` is `[0, 223]`
-(CI seconds), `seekable` is `true`, and the marks are:
+(build seconds), `seekable` is `true`, and the marks are:
 
 | id | figure t (s) | Anchor |
 |---|---|---|
@@ -271,7 +272,7 @@ Rules that hold:
 
 ## 6. Figure craft for video
 
-What made the first explainer work, in general terms:
+What makes an explainer work:
 
 - **Real numbers first, to scale.** Every length on the figure is its number.
   A plate that is twice as long took twice as long. The viewer can check it by
