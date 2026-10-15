@@ -48,6 +48,7 @@ runs one command.
 - "Make a before/after video of this fix for the PR."
 - "Record a 45 second tour of the new settings page for Slack."
 - "Here's a screen recording. Make it look better."
+- "Make an explainer video of how our build got faster."
 
 ### How it works
 
@@ -87,12 +88,28 @@ take, direct the camera, check, render, deliver). The current version ran in
 seconds. That is one machine and one video, so treat it as an example, not a
 promise.
 
+An explainer is mostly drawing time. A figure takes 30 to 90 minutes to
+draw. Recording a 40 second explainer at 60fps took 3 to 4 minutes on an
+Apple Silicon laptop (under 2 minutes for a seekable figure, which records in
+several tabs at once), and a draft for review rounds (`--draft`) about a
+minute. Those are one machine and one figure, so treat them as an example.
+
 ### What you can put in a video
 
 Title cards, issue cards that quote the bug as it was reported, recorded
 clips, before and after side by side, stills, and changelog or end cards.
 Clips take timed captions and callouts, and the video can carry music,
 narration and your logo.
+
+It can also make an explainer: a video of an animated figure instead of an
+app. The figure is an isometric SVG page drawn with the
+[anatomy](https://github.com/wheresryan22/anatomy) skill, and it is recorded
+frame by frame into a clip, so captions, callouts, the auto-camera and
+delivery work on it too. Captions can be timed to named moments in the figure
+(`atMark`), so they stay in step when the pacing changes. See
+[references/figure.md](skills/ui-demo-video/references/figure.md).
+
+[![The example explainer: one build machine against two, on one time axis](assets/explainer.jpg)](assets/explainer.mp4)
 
 ### Styles
 
@@ -142,6 +159,7 @@ These are optional. The agent uses them when they are installed.
 ```bash
 npx skills add Remocn/remocn              # the catalog of transitions and text effects
 npx skills add remotion-dev/skills        # general Remotion rules
+npx skills add wheresryan22/anatomy       # the figures for explainer videos
 ```
 
 ## Update or remove

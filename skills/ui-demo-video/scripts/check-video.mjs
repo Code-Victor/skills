@@ -18,13 +18,14 @@
 // The checks are plain functions (checkSpec, checkDemo) so demo.mjs runs the
 // same ones in-process.
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
   CAMERA_MODES, DEMO_KEYS, KNOWN_TRANSITIONS, SAFE_NAME, SCENE_KEYS, STEP_KEYS, TAKE_KEYS, THEME_KEYS, TOP_KEYS,
-  CALLOUT_KEYS, CALLOUT_STYLES, CALLOUT_SIDES, BRACKET_SIDES,
-  fillTiming, gapSec, isNote, resolveSpec, sceneSpans, styleName, takesUsed, STYLE_KEYS,
+  CALLOUT_KEYS, CALLOUT_STYLES, CALLOUT_SIDES, BRACKET_SIDES, CAPTION_KEYS,
+  FIGURE_INSTEAD, FIGURE_MARK_KEYS, FIGURE_STEP_KEYS, FIGURE_TAKE_KEYS,
+  clipPath, fillTiming, gapSec, hasScheme, isFigureTake, isNote, localPage, resolveSpec, sceneSpans, styleName, takeUrl, takesUsed, STYLE_KEYS,
 } from './spec-lib.mjs';
 import { STYLES, TOKEN_GROUPS, flatten, resolveStyle, styleNames, unknownStyleMessage } from './compositor/styles/index.js';
 import { cameraPose, sceneLayout, stripEmphasis } from './compositor/layout.js';
@@ -59,6 +60,14 @@ const media = (path) => {
   const m = { w: j.streams[0].width, h: j.streams[0].height, dur: +j.format.duration };
   probeCache.set(path, m);
   return m;
+};
+// The mark ids a recording logged (its events.json), or null without one.
+const clipMarks = (file) => {
+  try {
+    return (JSON.parse(readFileSync(file, 'utf8')).events ?? []).filter((e) => e?.type === 'mark').map((e) => e.label);
+  } catch {
+    return null;
+  }
 };
 
 /**
@@ -311,15 +320,39 @@ function checkSpecInner(spec, { pub = '.', files = true, demo = false, style: st
         if (files || !c.mark) errors.push(`${at}: callout${name} has no atSec; give one or run scripts/auto-camera.mjs to resolve its mark`);
       } else if (c.atSec < 0 || c.atSec > s.durationSec) errors.push(`${at}: callout at ${c.atSec}s is outside the scene`);
     }
-    if (s.captions !== undefined && !Array.isArray(s.captions)) errors.push(`${at}: captions must be a list of { atSec, text }`);
+    if (s.captions !== undefined && !Array.isArray(s.captions)) errors.push(`${at}: captions must be a list of { atSec, text } (or { atMark, text })`);
     if (Array.isArray(s.captions) && s.captions.length && s.captions.every(isObj)) {
-      const cs = [...s.captions].sort((a, b) => a.atSec - b.atSec);
-      cs.forEach((c, j) => {
-        if (!c.text) errors.push(`${at}: caption ${j} has no text`);
-        if (c.atSec < 0 || c.atSec >= s.durationSec) errors.push(`${at}: caption at ${c.atSec}s is outside the scene`);
-        const until = j + 1 < cs.length ? cs[j + 1].atSec : s.durationSec;
-        caption(at, c.text, until - c.atSec - 0.6);
-      });
+      // A caption is timed by atSec, or by atMark: auto-camera.mjs turns the mark
+      // into atSec (leadSec, 0.6, before it), so a video.json it has run on has both.
+      let marksHere;
+      for (const c of s.captions) {
+        const name = typeof c.atMark === 'string' ? ` at mark "${c.atMark}"` : '';
+        unknown(c, CAPTION_KEYS, `${at}: caption${name}`, out, 'warnings');
+        if (c.atMark !== undefined && (typeof c.atMark !== 'string' || !c.atMark)) errors.push(`${at}: caption atMark must be a mark's id (text)`);
+        if (c.leadSec !== undefined && !(typeof c.leadSec === 'number' && c.leadSec >= 0)) errors.push(`${at}: caption${name} leadSec must be seconds before the mark (0.6 by default)`);
+        if (c.leadSec !== undefined && c.atMark === undefined) warnings.push(`${at}: caption leadSec only applies with atMark; with atSec, give the time itself`);
+        if (demo && c.atMark !== undefined && c.atSec !== undefined) errors.push(`${at}: caption${name} has both atSec and atMark; use one (atMark keeps it on the mark when the pacing changes)`);
+        if (c.atSec === undefined && c.atMark === undefined) errors.push(`${at}: caption "${str(c.text).slice(0, 40)}" needs atSec (seconds into the scene) or atMark (a mark's id)`);
+        // After recording every mark the clip has is resolved, so a caption still
+        // without atSec names a mark the recording does not have.
+        if (files && !demo && c.atSec === undefined && typeof c.atMark === 'string' && typeof s.src === 'string') {
+          marksHere ??= clipMarks(join(pub, `${s.src}.events.json`));
+          if (marksHere === null) errors.push(`${at}: caption${name}: no ${s.src}.events.json to find the mark in (record the take, or give atSec)`);
+          else if (marksHere.includes(c.atMark)) errors.push(`${at}: caption${name} has no atSec yet; run scripts/auto-camera.mjs on this file to time it`);
+          else errors.push(`${at}: caption${name}: the recording has no mark "${c.atMark}" (its marks: ${marksHere.join(', ') || 'none'}); use one of those, or add it to the take's "marks" or the page's`);
+        }
+      }
+      // Reading time needs every caption's time; before auto-camera has timed
+      // the marks, only the lines are checked.
+      if (s.captions.every((c) => typeof c.atSec === 'number')) {
+        const cs = [...s.captions].sort((a, b) => a.atSec - b.atSec);
+        cs.forEach((c, j) => {
+          if (!c.text) errors.push(`${at}: caption ${j} has no text`);
+          if (c.atSec < 0 || c.atSec >= s.durationSec) errors.push(`${at}: caption at ${c.atSec}s${c.atMark ? ` (from mark "${c.atMark}")` : ''} is outside the scene`);
+          const until = j + 1 < cs.length ? cs[j + 1].atSec : s.durationSec;
+          caption(at, c.text, until - c.atSec - 0.6);
+        });
+      } else s.captions.forEach((c, j) => (c.text ? caption(at, c.text, Infinity) : errors.push(`${at}: caption ${j} has no text`)));
     } else caption(at, s.caption, s.durationSec - 0.6);
   });
   if (typeof spec.music?.src === 'string') exists('music', spec.music.src);
@@ -353,23 +386,135 @@ const checkSteps = (at, steps, out) => {
   });
 };
 
+// A figure take's length before it is recorded: the timeline's last video
+// second, else its duration.
+const figureLength = (t) => (Array.isArray(t.timeline) && Array.isArray(t.timeline.at(-1)) ? t.timeline.at(-1)[0] : t.duration);
+
+// A figure take: an HTML page recorded frame by frame (capture-figure.mjs),
+// with figure time from a timeline. `dir` is the demo.json's folder.
+const checkFigureTake = (at, t, dir, out) => {
+  const { errors, warnings } = out;
+  if (t.source !== 'figure') errors.push(`${at}: source must be "figure" (leave it out for a screen take)`);
+  for (const k of Object.keys(t)) {
+    if (isNote(k) || FIGURE_TAKE_KEYS.includes(k)) continue;
+    errors.push(FIGURE_INSTEAD[k] ? `${at}: "${k}" is for screen takes; ${FIGURE_INSTEAD[k]}` : `${at}: unknown key "${k}"${closest(k, FIGURE_TAKE_KEYS)}`);
+  }
+  if (typeof t.page !== 'string' || !t.page) errors.push(`${at}: needs "page", the figure's HTML file (relative to demo.json)`);
+  else if (dir && !existsSync(resolve(dir, t.page))) errors.push(`${at}: page ${resolve(dir, t.page)} does not exist`);
+  if (t.viewport !== undefined && !(Array.isArray(t.viewport) && t.viewport.length === 2 && t.viewport.every((n) => Number.isInteger(n) && n >= 100 && n <= 8192)))
+    errors.push(`${at}: viewport must be [width, height] in CSS pixels, like [1920, 1080]`);
+  if (t.dpr !== undefined && !(typeof t.dpr === 'number' && t.dpr >= 1 && t.dpr <= 3)) errors.push(`${at}: dpr must be a number from 1 to 3 (1.5 by default)`);
+  if (t.fps !== undefined && !(typeof t.fps === 'number' && t.fps > 0 && t.fps <= 120)) errors.push(`${at}: fps must be frames a second, up to 120`);
+
+  // How long it is and how figure time runs.
+  const tl = t.timeline;
+  if (tl !== undefined && t.duration !== undefined) errors.push(`${at}: give "timeline" or "duration", not both (the timeline's last video second is the length)`);
+  else if (tl === undefined && t.duration === undefined) errors.push(`${at}: needs "timeline" ([[videoSec, figureT], ...]) or "duration" (seconds)`);
+  if (t.duration !== undefined && !(typeof t.duration === 'number' && t.duration > 0)) errors.push(`${at}: duration must be seconds`);
+  if (tl !== undefined) {
+    if (!Array.isArray(tl) || tl.length < 2 || !tl.every((p) => Array.isArray(p) && p.length === 2 && p.every(Number.isFinite)))
+      errors.push(`${at}: timeline must be [[videoSec, figureT], ...] with at least two points`);
+    else {
+      if (tl[0][0] !== 0) errors.push(`${at}: timeline must start at video second 0 (it starts at ${tl[0][0]})`);
+      for (let i = 1; i < tl.length; i++) {
+        if (!(tl[i][0] > tl[i - 1][0])) errors.push(`${at}: timeline video seconds must rise: ${tl[i - 1][0]} then ${tl[i][0]}`);
+        if (tl[i][1] < tl[i - 1][1]) errors.push(`${at}: timeline figure time must never fall: ${tl[i - 1][1]} then ${tl[i][1]} (repeat a value to hold)`);
+      }
+    }
+  }
+  const length = figureLength(t);
+
+  if (t.marks !== undefined && !Array.isArray(t.marks)) errors.push(`${at}: marks must be a list of { "id": "name", "t": <figure time> }`);
+  const ids = new Set();
+  let posters = 0;
+  (Array.isArray(t.marks) ? t.marks : []).forEach((m, j) => {
+    const ma = `${at} mark ${j}`;
+    if (!isObj(m)) return errors.push(`${ma}: a mark is { "id": "name", "t": <figure time>, "anchor": "<css>" }`);
+    unknown(m, FIGURE_MARK_KEYS, ma, out);
+    if (typeof m.id !== 'string' || !m.id) errors.push(`${ma}: needs an "id" (captions and callouts name it)`);
+    else if (ids.has(m.id)) errors.push(`${ma}: id "${m.id}" is used twice`);
+    else ids.add(m.id);
+    if (!Number.isFinite(m.t)) errors.push(`${ma}: needs "t", the figure time it happens at`);
+    if (m.anchor !== undefined && (typeof m.anchor !== 'string' || !m.anchor)) errors.push(`${ma}: anchor must be a CSS selector`);
+    if (m.label !== undefined && typeof m.label !== 'string') errors.push(`${ma}: label must be text`);
+    for (const k of ['poster', 'look']) if (m[k] !== undefined && typeof m[k] !== 'boolean') errors.push(`${ma}: ${k} must be true or false`);
+    if (m.poster === true) posters++;
+  });
+  if (posters > 1) errors.push(`${at}: ${posters} marks say "poster": true; give it to one (it picks the poster frame)`);
+
+  // Clock mode's timed input: one action a step, at a video second.
+  if (t.figureSteps !== undefined && !Array.isArray(t.figureSteps)) errors.push(`${at}: figureSteps must be a list of { "at": <sec>, ... }`);
+  const point = (p) => Array.isArray(p) && p.length === 2 && p.every((n) => typeof n === 'number' && n >= 0 && n <= 1);
+  (Array.isArray(t.figureSteps) ? t.figureSteps : []).forEach((s, j) => {
+    const sa = `${at} figureStep ${j}`;
+    if (!isObj(s)) return errors.push(`${sa}: a figure step is an object like { "at": 2, "move": [0.3, 0.55] }`);
+    unknown(s, FIGURE_STEP_KEYS, sa, out);
+    if (!(typeof s.at === 'number' && s.at >= 0)) errors.push(`${sa}: needs "at", the video second it happens`);
+    else if (typeof length === 'number' && s.at > length) warnings.push(`${sa}: at ${s.at}s is after the take ends (${length}s), so it never happens`);
+    const acts = ['move', 'key', 'click', 'mark'].filter((k) => k in s);
+    if (acts.length !== 1) errors.push(`${sa}: needs one of move, key, click or mark (got ${acts.join(', ') || 'none'}); use a step for each`);
+    for (const k of ['move', 'click']) if (k in s && !point(s[k])) errors.push(`${sa}: ${k} is [x, y] in fractions of the viewport, like [0.3, 0.55]`);
+    if ('key' in s && (typeof s.key !== 'string' || !s.key)) errors.push(`${sa}: key is a key name, like "ArrowRight"`);
+    if ('mark' in s && (typeof s.mark !== 'string' || !s.mark)) errors.push(`${sa}: mark is the mark's id`);
+    if ('dur' in s && !('move' in s)) errors.push(`${sa}: dur only goes with move (it makes a glide)`);
+    else if ('dur' in s && !(typeof s.dur === 'number' && s.dur > 0)) errors.push(`${sa}: dur must be seconds`);
+    for (const k of ['anchor', 'label', 'look']) if (k in s && !('mark' in s)) errors.push(`${sa}: ${k} only goes with mark`);
+    if (s.anchor !== undefined && typeof s.anchor !== 'string') errors.push(`${sa}: anchor must be a CSS selector`);
+    if (s.look !== undefined && typeof s.look !== 'boolean') errors.push(`${sa}: look must be true or false`);
+  });
+  if (t.seed !== undefined && !Number.isInteger(t.seed)) errors.push(`${at}: seed must be a whole number`);
+  if (t.transitions !== undefined && !['off', 'on'].includes(t.transitions)) errors.push(`${at}: transitions must be "off" or "on"`);
+};
+
+// Could a take have this mark? Before recording that is a guess: its own
+// marks, figureSteps and mark steps, a recording already made, or (a figure
+// defines its own marks) the id written in quotes in the page or a script
+// beside it.
+const mayHaveMark = (name, t, id, dir) => {
+  if (isFigureTake(t)) {
+    if ((Array.isArray(t.marks) ? t.marks : []).some((m) => m?.id === id)) return true;
+    if ((Array.isArray(t.figureSteps) ? t.figureSteps : []).some((s) => s?.mark === id)) return true;
+  } else if ((Array.isArray(t.steps) ? t.steps : []).some((s) => s?.mark === id)) return true;
+  if (!dir) return true;
+  if (clipMarks(join(dir, `${clipPath(name)}.events.json`))?.includes(id)) return true;
+  if (!isFigureTake(t) || typeof t.page !== 'string') return false;
+  const page = resolve(dir, t.page);
+  const quoted = new RegExp(`['"\`]${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"\`]`);
+  let names = [];
+  try { names = readdirSync(dirname(page)).filter((n) => /\.(html?|m?js|json)$/i.test(n)); } catch {}
+  return [page, ...names.map((n) => join(dirname(page), n))].some((f) => {
+    try { return statSync(f).size < 20e6 && quoted.test(readFileSync(f, 'utf8')); } catch { return false; }
+  });
+};
+
 /**
  * Check an authored demo.json with no clips and no browser: the takes, the
  * steps, how scenes use them, then every static scene check. Returns the same
- * shape as checkSpec.
+ * shape as checkSpec. `dir` is the demo.json's folder: a figure take's page is
+ * looked for there (without it, pages are not checked).
  */
-export function checkDemo(demo) {
+export function checkDemo(demo, { dir } = {}) {
   if (!isObj(demo)) return { errors: ['the file must hold one JSON object (got ' + (demo === null ? 'null' : Array.isArray(demo) ? 'a list' : typeof demo) + ')'], warnings: [], totalSec: 0, scenes: 0 };
   try {
-    return checkDemoInner(demo);
+    return checkDemoInner(demo, dir);
   } catch (e) {
     return wrongShape(e);
   }
 }
-function checkDemoInner(demo) {
+function checkDemoInner(demo, dir) {
   const out = { errors: [], warnings: [] };
   if (demo.name !== undefined && !SAFE_NAME.test(str(demo.name))) out.errors.push(`name "${demo.name}" must be letters, digits, dots, dashes or underscores (it names the output files)`);
-  if (demo.url !== undefined) try { new URL(demo.url); } catch { out.errors.push(`url "${demo.url}" is not a full URL like http://localhost:3000`); }
+  // A url with no scheme is a page next to demo.json (it records as file://).
+  const noPage = (url) => {
+    const file = localPage(url, dir);
+    let ok = false;
+    try { ok = !!file && statSync(file).isFile(); } catch {}
+    return file && !ok ? file : null;
+  };
+  if (typeof demo.url === 'string' && demo.url && !hasScheme(demo.url)) {
+    const missing = noPage(demo.url);
+    if (missing) out.errors.push(`url "${demo.url}" has no scheme, so it names a page next to demo.json, but there is no file at ${missing}; give a full URL like http://localhost:3000 or a page that exists`);
+  } else if (demo.url !== undefined) try { new URL(demo.url); } catch { out.errors.push(`url "${demo.url}" is not a full URL like http://localhost:3000`); }
   if (demo.capture !== undefined && !isObj(demo.capture)) out.errors.push('capture must be an object of options');
   else unknown(demo.capture, TAKE_KEYS.filter((k) => !['url', 'duration', 'steps', 'setup', 'pageSetup', 'rehearse'].includes(k)), 'capture', out);
   const takes = isObj(demo.takes) ? demo.takes : {};
@@ -378,9 +523,16 @@ function checkDemoInner(demo) {
     const at = `take "${name}"`;
     if (!SAFE_NAME.test(name)) out.errors.push(`${at}: use letters, digits, dots, dashes or underscores in take names (they name the clip files)`);
     if (!isObj(t)) { out.errors.push(`${at}: must be an object with url, duration and steps`); continue; }
+    if (isFigureTake(t)) { checkFigureTake(at, t, dir, out); continue; }
     unknown(t, TAKE_KEYS, at, out);
     if (!t.url && !demo.url) out.errors.push(`${at}: no url (give the take one or set "url" at the top of the file)`);
-    else try { new URL(t.url ?? '', demo.url); } catch { out.errors.push(`${at}: url "${t.url}" is not a URL`); }
+    else if (t.url) {
+      const url = takeUrl(t.url, demo.url);
+      if (typeof url === 'string' && !hasScheme(url)) {
+        const missing = noPage(url);
+        if (missing) out.errors.push(`${at}: url "${t.url}" has no scheme, so it names a page next to demo.json, but there is no file at ${missing} (or give a full URL like http://localhost:3000/page)`);
+      } else try { new URL(url); } catch { out.errors.push(`${at}: url "${t.url}" is not a URL`); }
+    }
     if (t.duration !== undefined && !(t.duration > 0)) out.errors.push(`${at}: duration must be seconds`);
     // --hide-floating hides small fixed-position widgets, and toasts are exactly that.
     const floating = t.hideFloating ?? demo.capture?.hideFloating;
@@ -400,6 +552,24 @@ function checkDemoInner(demo) {
     if (isObj(s) && s.type === 'split') {
       for (const side of ['before', 'after'])
         if (!s[side]?.take && !s[side]?.src) out.errors.push(`scene ${i}: split needs ${side}.take (or ${side}.src)`);
+    }
+  });
+  scenes.forEach((s, i) => {
+    if (!isObj(s)) return;
+    // A figure take's length is known before it is recorded.
+    for (const ref of s.type === 'split' ? [s.before, s.after] : s.type === 'clip' ? [s] : []) {
+      const t = isObj(ref) ? takes[ref.take] : null;
+      const len = isFigureTake(t) ? figureLength(t) : undefined;
+      const need = (ref?.trimStartSec ?? 0) + (s.durationSec ?? 0) * (s.playbackRate ?? 1);
+      if (typeof len === 'number' && len > 0 && need > len + 0.05)
+        out.errors.push(`scene ${i}: needs ${need.toFixed(2)}s of take "${ref.take}", which is ${len}s long (its ${t.timeline ? "timeline's last video second" : 'duration'}); lengthen the take or shorten the scene`);
+    }
+    // A caption timed to a mark the take may not have: certain only after recording.
+    if (s.type !== 'clip' || !isObj(takes[s.take]) || !Array.isArray(s.captions)) return;
+    for (const c of s.captions) {
+      if (!isObj(c) || typeof c.atMark !== 'string' || !c.atMark) continue;
+      if (!mayHaveMark(s.take, takes[s.take], c.atMark, dir))
+        out.warnings.push(`scene ${i}: caption atMark "${c.atMark}": take "${s.take}" has no mark "${c.atMark}" that can be seen before recording (${isFigureTake(takes[s.take]) ? 'not in its marks or figureSteps, nor in its page' : 'no mark step names it'}); after recording a missing mark is an error`);
     }
   });
   // checkSpec on the authored file already flags missing take/src; resolving
@@ -429,7 +599,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   }
   const demo = (isObj(spec) && DEMO_KEYS.some((k) => k in spec)) || /demo\.json$/.test(file) || (Array.isArray(spec?.scenes) && spec.scenes.some((s) => s?.take || s?.before?.take));
   let r;
-  if (demo) r = checkDemo(spec);
+  if (demo) r = checkDemo(spec, { dir: dirname(resolve(file)) });
   else {
     // Default: a Remotion project (src/video.json -> ../public), else next to the file.
     const guess = resolve(dirname(file), '..', 'public');

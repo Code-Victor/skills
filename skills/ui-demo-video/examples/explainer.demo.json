@@ -1,0 +1,48 @@
+{
+  "_note": "An explainer in the demo.json format: a figure page recorded frame by frame, with captions timed to its marks. Run: node scripts/demo.mjs examples/explainer.demo.json (copy this file and the figure/ folder out of the skill first, into a folder that survives a restart). Everything here is made up: the build steps, the timings and the figure.",
+  "name": "parallel-build",
+  "style": "studio",
+  "takes": {
+    "bench": {
+      "source": "figure",
+      "page": "figure/bench.html",
+      "_timeline": "Video seconds to figure time (figure seconds are build seconds, 0 to 223). Slow while the machines set up, quick through the long compile, slow again at each mark, then a hold on the finished bench.",
+      "_marks": "The page has setup-done, checks-done, gate-open, serial-done and saved. These add caption-only marks (no anchor, so the camera ignores them) and keep the camera off checks-done, serial-done and saved: a mark here replaces the page's whole, so anchor and label are repeated.",
+      "marks": [
+        { "id": "lanes-start", "t": 2, "label": "Every lane starts" },
+        { "id": "split", "t": 33, "label": "The work splits" },
+        { "id": "serial-compile", "t": 75, "label": "Serial starts compiling at 1:15" },
+        { "id": "checks-done", "t": 125, "anchor": "[data-tail=\"checks\"]", "label": "Parallel 2 done at 2:05", "look": false },
+        { "id": "saving", "t": 136, "label": "Time saved starts to grow" },
+        { "id": "serial-done", "t": 220, "anchor": "[data-gate=\"serial\"]", "label": "Serial run done: 3:40", "look": false },
+        { "id": "saved", "t": 223, "anchor": "[data-part=\"saved\"]", "label": "1 m 30 s saved", "poster": true, "look": false }
+      ],
+      "timeline": [[0, 0], [2.5, 0], [7, 30], [9, 36], [13.5, 100], [15.5, 119], [17, 125], [20, 130], [22.5, 133], [24, 133], [28.5, 200], [30, 214], [31.5, 220], [34, 223], [39, 223]]
+    }
+  },
+  "transition": "zoom-blur",
+  "transitionSec": 0.5,
+  "scenes": [
+    { "type": "title", "text": "Split the build across two machines", "subtitle": "The same steps, in turn or side by side", "durationSec": 4 },
+    {
+      "type": "clip", "take": "bench", "durationSec": 39,
+      "_autoCamera": "One lean-in, on the gate-open mark the callout uses. Deep enough (pad 2 lets the gate's box fill more of the view) that the view stays clear of the nameplates on the left and the stats and clock below.",
+      "autoCamera": { "zoom": 1.75, "maxZoom": 1.75, "pad": 2 },
+      "captions": [
+        { "atMark": "lanes-start", "text": "Each machine starts and installs first." },
+        { "atMark": "split", "text": "Lint, types and tests move to Parallel 2." },
+        { "atMark": "serial-compile", "text": "Serial only starts its compile at 1:15." },
+        { "atMark": "checks-done", "text": "Parallel 2 is done at 2:05." },
+        { "atMark": "gate-open", "text": "The compile lane sets the finish: 2:10." },
+        { "atMark": "saving", "text": "From here on, every second is time saved." },
+        { "atMark": "serial-done", "leadSec": 1, "text": "One machine running every step: 3:40." },
+        { "atMark": "saved", "text": "The teal strip is the 1 m 30 s saved." }
+      ],
+      "callouts": [{ "mark": "gate-open", "label": "Parallel run done" }]
+    },
+    {
+      "type": "list", "title": "What the bench showed", "durationSec": 5,
+      "items": ["Two machines: done at 2:10", "One machine: done at 3:40", "1 m 30 s saved on every build"]
+    }
+  ]
+}

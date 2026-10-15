@@ -1,0 +1,142 @@
+<!doctype html>
+<!--
+  A starter figure for an explainer video (demo.mjs init <dir> --figure).
+
+  Replace this page with your own figure: an anatomy build (see
+  references/figure.md) or any page that calls figureHook() from
+  figure-hook.js. What the recorder needs from it:
+    - it fills the viewport (1920x1080 unless the take says otherwise) and
+      keeps its legend inside the frame; captions live in demo.json, not here;
+    - draw(t) renders figure time t, step(dt, t) moves springs on by dt real
+      seconds, and nothing reads the wall clock while it records;
+    - when `recording` is true it starts still: no idle tour, no timers.
+  Marks name moments in figure time. Captions in demo.json time themselves to
+  them with "atMark", and a callout can circle a mark's anchor.
+
+  The script below carries a copy of figure-hook.js (demo.mjs init puts it
+  there), so the page opens straight from disk: a browser blocks module
+  imports from file://.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Starter figure</title>
+<style>
+  html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #f6f7fb; }
+  svg { display: block; width: 100%; height: 100%; }
+  text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Helvetica, Arial, sans-serif; fill: #161a24; }
+  .muted { fill: #5d6475; }
+  .num { font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<!-- Drawn in 1920x1080 units: 1 unit is 1 px of a 1080p video, so 18 is the smallest text that reads. -->
+<svg id="figure" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid meet" role="img" aria-label="A bar filling from 0 to 10, with a marker that follows it on a spring">
+  <text x="160" y="196" font-size="60" font-weight="650">Figure time, from 0 to 10</text>
+  <text x="160" y="254" font-size="32" class="muted">A starter figure: replace it with your own</text>
+
+  <text id="count" x="1760" y="236" font-size="120" font-weight="650" text-anchor="end" class="num">0.0</text>
+  <text x="1760" y="286" font-size="30" text-anchor="end" class="muted">of 10</text>
+
+  <!-- the track and the bar that fills it -->
+  <rect x="160" y="560" width="1600" height="64" rx="32" fill="#e2e6f0"/>
+  <rect id="bar" x="160" y="560" width="0" height="64" rx="32" fill="#3b6bff"/>
+  <g id="ticks"></g>
+
+  <!-- the goal at 10: the anchor of the "done" mark -->
+  <g data-mark="done">
+    <line x1="1760" y1="368" x2="1760" y2="548" stroke="#161a24" stroke-width="4" stroke-linecap="round"/>
+    <path d="M1762 370 L1838 394 L1762 418 Z" fill="#161a24"/>
+    <text x="1760" y="346" font-size="30" font-weight="600" text-anchor="middle">Goal</text>
+  </g>
+
+  <!-- the marker: it chases the end of the bar on a spring, so it lags, overshoots and settles -->
+  <g id="marker">
+    <line x1="0" y1="518" x2="0" y2="548" stroke="#ff6a3d" stroke-width="6" stroke-linecap="round"/>
+    <circle cx="0" cy="494" r="22" fill="#ff6a3d" stroke="#ffffff" stroke-width="5"/>
+  </g>
+
+  <!-- the legend, inside the frame -->
+  <g transform="translate(160 880)">
+    <rect x="0" y="-26" width="44" height="28" rx="14" fill="#3b6bff"/>
+    <text x="64" y="0" font-size="30">The bar: figure time</text>
+    <circle cx="560" cy="-12" r="15" fill="#ff6a3d" stroke="#ffffff" stroke-width="4"/>
+    <text x="592" y="0" font-size="30">The marker: a spring, moved by step()</text>
+    <path d="M1170 -30 L1170 2 M1172 -28 L1204 -18 L1172 -8 Z" stroke="#161a24" stroke-width="4" fill="#161a24" stroke-linejoin="round"/>
+    <text x="1226" y="0" font-size="30">Marks: halfway (5), done (10)</text>
+  </g>
+</svg>
+
+<script type="module">
+import { figureHook, monotone, recording } from './figure-hook.js';
+
+const svg = 'http://www.w3.org/2000/svg';
+const X0 = 160, X1 = 1760;
+const x = (t) => X0 + ((X1 - X0) * t) / 10;
+
+// Ticks 0 to 10; the one at 5 is the anchor of the "halfway" mark.
+const ticks = document.getElementById('ticks');
+for (let k = 0; k <= 10; k++) {
+  const g = document.createElementNS(svg, 'g');
+  if (k === 5) g.setAttribute('data-mark', 'halfway');
+  const line = document.createElementNS(svg, 'line');
+  Object.entries({ x1: x(k), x2: x(k), y1: 644, y2: 668, stroke: '#9aa1b2', 'stroke-width': 3 }).forEach(([a, v]) => line.setAttribute(a, v));
+  const label = document.createElementNS(svg, 'text');
+  Object.entries({ x: x(k), y: 712, 'font-size': 30, 'text-anchor': 'middle', class: k === 5 || k === 10 ? 'num' : 'num muted' }).forEach(([a, v]) => label.setAttribute(a, v));
+  if (k === 5 || k === 10) label.setAttribute('font-weight', '650');
+  label.textContent = k;
+  g.append(line, label);
+  ticks.append(g);
+}
+
+const bar = document.getElementById('bar');
+const count = document.getElementById('count');
+const marker = document.getElementById('marker');
+
+// The marker's spring: its position and speed, pulled towards the bar's end.
+const spring = { pos: x(0), vel: 0 };
+const STIFFNESS = 140, DAMPING = 13;
+
+// Advance the spring by dt real seconds towards where the bar ends at figure time t.
+function step(dt, t) {
+  const pull = STIFFNESS * (x(t) - spring.pos) - DAMPING * spring.vel;
+  spring.vel += pull * dt;
+  spring.pos += spring.vel * dt;
+}
+
+// Draw figure time t. Reads nothing but t and the spring.
+function draw(t) {
+  bar.setAttribute('width', Math.max(0, x(t) - X0).toFixed(2));
+  count.textContent = t.toFixed(1);
+  marker.setAttribute('transform', `translate(${spring.pos.toFixed(2)} 0)`);
+}
+
+// The live loop, for opening the page in a browser: it plays the same curve as
+// the starter's demo.json timeline, over and over. Never runs while recording.
+const curve = monotone([[0, 0], [4, 10], [6, 10]]);
+let raf = 0, last = 0, start = 0;
+function live(now) {
+  const dt = last ? Math.min((now - last) / 1000, 1 / 30) : 1 / 60;
+  last = now;
+  start ||= now;
+  const t = curve(((now - start) / 1000) % 7);
+  step(dt, t);
+  draw(t);
+  raf = requestAnimationFrame(live);
+}
+
+figureHook({
+  range: [0, 10],
+  marks: [
+    { id: 'halfway', t: 5, anchor: '[data-mark="halfway"]', label: 'Halfway' },
+    { id: 'done', t: 10, anchor: '[data-mark="done"]', label: 'Done', poster: true },
+  ],
+  step,
+  draw,
+  stop: () => cancelAnimationFrame(raf),
+});
+if (!recording) raf = requestAnimationFrame(live);
+</script>
+</body>
+</html>

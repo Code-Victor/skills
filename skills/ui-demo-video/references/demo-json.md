@@ -91,7 +91,7 @@ with `_` or `$`, or is called `comment` or `notes`, is ignored.
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `name` | string | the file name without `.demo.json`, else the folder name | Names the outputs (`out/<name>.mp4`). Letters, digits, dots, dashes and underscores; it must start with a letter or digit |
-| `url` | string | none | Base URL. A take's relative `url` is resolved against it. Must be a full URL such as `http://localhost:3000` |
+| `url` | string | none | Base URL. A take's relative `url` is resolved against it. A full URL such as `http://localhost:3000`, or a page on disk: a url with no scheme (`app/index.html`) is a file relative to the `demo.json` folder, recorded as a `file://` url. A missing file is an error |
 | `capture` | object | `{}` | Recording options shared by every take (next section). A take's own value wins |
 | `takes` | object | `{}` | Take name to take. Names follow the same character rule as `name`, because they name the clip files |
 | `scenes` | list | required | The scenes. Types and options: `scenes.md` |
@@ -200,7 +200,7 @@ A take is one recording: a URL, the steps to run on it, and options.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `url` | string | top-level `url` | Where to start. Relative paths resolve against the top-level `url`. One of the two is required |
+| `url` | string | top-level `url` | Where to start. Relative paths resolve against the top-level `url`. With no top-level `url`, a url with no scheme (`figure/app.html`) is a page on disk, relative to the `demo.json` folder, recorded as a `file://` url; no server needed. One of the two is required |
 | `steps` | list | `[]` | What the cursor does (`steps.md`). A take with no steps records the page sitting still, and warns |
 | `duration` | seconds | estimated | The least the clip may run. A clip runs to the end of its steps or to `duration`, whichever is later, so this is a floor and the steps decide the length |
 | `setup` | shell command | none | Runs in the demo folder (through `sh -c`) before the page loads, for every rehearsal and every recording. Reset data or seed a user here. Exit non-zero stops the stage. Time limit 5 minutes |
@@ -234,11 +234,102 @@ and again before the recording.) Skip all rehearsals with `--no-rehearse`.
 What a rehearsal cannot check: timing, that the click hit the element you
 meant, what the result looks like.
 
+## Figure takes
+
+A take with `"source": "figure"` records an animated HTML figure (made with
+the `anatomy` skill) frame by frame, not a web app. The guide is
+`figure.md`; this is the key reference.
+
+```json
+{ "source": "figure", "page": "figure/bench.html",
+  "timeline": [[0, 0], [2.5, 0], [7, 30], [20, 130], [34, 223], [39, 223]] }
+```
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `source` | `"figure"` | none | Switches the take to a figure take |
+| `page` | string | none | Required. The HTML file, relative to the `demo.json` folder, or absolute. It must exist |
+| `viewport` | `[w, h]` | `[1920, 1080]` | CSS pixels, pinned |
+| `dpr` | number, 1 to 3 | `1.5` | Device pixel ratio, pinned |
+| `fps` | number | 60 | Frame rate of the clip |
+| `timeline` | `[[videoSec, figureT], ...]` | none | At least 2 points. `videoSec` starts at 0 and rises strictly; `figureT` never falls. A monotone cubic runs between them; a repeated `figureT` is a hold. The take's length is the last `videoSec`: the clip has `round(length * fps)` frames plus a copy of the last one that stamps the exact length |
+| `duration` | seconds | none | Only when there is no `timeline`. Figure time runs linearly over the page's `range` (hook mode), spread so the last frame shows the end of the range, or one to one with video seconds (clock mode). Give `timeline` or `duration`, not both |
+| `marks` | `[{ "id", "t", "anchor"?, "label"?, "poster"?, "look"? }]` | `[]` | Named moments in figure time, added to the page's own. On the same `id` this mark replaces the page's whole: fields are not merged, so repeat `anchor` and `label` if you still want them. Needed in clock mode, where the page has none. `anchor` is a CSS selector read for the mark's box. `poster: true` on one mark picks the poster (at most one: more is an error). `look: false` keeps the camera off it. Ids must be unique within the take. A mark fires on the first frame whose figure time reaches `t`; one the timeline never reaches is a warning and has no event |
+| `figureSteps` | list | `[]` | Clock mode only (below) |
+| `seed` | integer | 1 | Clock mode: seeds `Math.random` |
+| `transitions` | `"off"` or `"on"` | `"off"` | Clock mode: whether CSS transitions run |
+| `crf`, `jpegQuality`, `encoder` | | as under Capture options | The only capture options a figure take takes |
+
+Allowed on a figure take: the keys above and nothing else. A key a figure
+take cannot use is an error. The message reads `take "<name>": "<key>" is for
+screen takes; <what to do instead>`, and a key that is not a key at all gets
+`unknown key` and the closest name:
+
+| Key | What the message says to do instead |
+|---|---|
+| `url` | A figure take records its `page` (an HTML file next to `demo.json`), not a url |
+| `steps` | Use `marks` for named moments and `figureSteps` for timed input (clock mode) |
+| `setup` | A figure take runs no setup command: build the page before you record |
+| `pageSetup` | Have the page read `window.__figureRecording` (`figure-hook.js` exports it as `recording`) to start still |
+| `rehearse` | A figure take has no rehearsal: check frames with `capture-figure.mjs --preview` |
+| `width`, `height` | Use `"viewport": [w, h]` |
+| `scale` | Use `dpr` |
+| `mobile` | Use `viewport` (for example `[390, 844]`) and `dpr` |
+| `dark` | Draw the figure in the colours you want: no colour scheme is emulated |
+| `hide`, `hideFloating`, `keep` | A figure page has nothing to hide: leave it out of the page |
+| `redact` | Draw no private data in a figure: leave it out of the page |
+| `slow` | Not needed: a figure take is stepped frame by frame |
+| `lossless` | Use `jpegQuality` (up to 100) for sharper frames |
+| `allowRedirect` | Not needed: a figure take loads a local file, so there is no redirect |
+| `cursorScale`, `noCursor`, `noRipple` | A figure take draws no cursor |
+
+The same keys are checked on the take itself only. The top-level `url` and
+every `capture` option except `fps`, `crf`, `jpegQuality` and `encoder` are
+ignored for a figure take, so a demo with screen takes and a figure take can
+keep its `capture` defaults. `examples/hybrid.demo.json` mixes the two.
+
+A figure take has two modes. When the page sets `window.__figure` (the hook
+contract in `figure.md`) the recorder calls it for each frame, with figure
+time read off the `timeline`. When it does not, the recorder loads the page
+again on a virtual clock (`scripts/figure-clock.js`) and the page's own loop
+plays: figure time is then virtual seconds since load, `seed` seeds
+`Math.random`, `transitions` switches CSS transitions on, and `figureSteps`
+give it input. `figure.md` section 7 lists what the clock drives and what it
+does not (iframes, a page's own `pause()`, `crypto.getRandomValues`,
+`event.timeStamp`, `document.timeline.currentTime`).
+
+### `figureSteps` (clock mode only)
+
+Steps happen at fixed video seconds, not in sequence. Each fires on the first
+frame whose video second reaches `at`. A page with a hook ignores them, with a
+warning.
+
+```json
+"figureSteps": [
+  { "at": 2.0, "move": [0.30, 0.55] },
+  { "at": 3.0, "move": [0.70, 0.55], "dur": 4.0 },
+  { "at": 8.0, "click": [0.5, 0.5] },
+  { "at": 8.5, "key": "ArrowRight" },
+  { "at": 12.0, "mark": "drawer-open", "anchor": ".drawer" }
+]
+```
+
+| Step | Does |
+|---|---|
+| `{ "at", "move": [x, y], "dur"? }` | Move the pointer to a point, in fractions of the viewport. Without `dur` it jumps. With `dur` it glides from where the pointer was, once a frame, with the cursor's ease in and out (the first move jumps: there is nowhere to glide from) |
+| `{ "at", "click": [x, y] }` | Move there, press and release the left button |
+| `{ "at", "key": "<name>" }` | Key down and up, such as `ArrowRight`. It goes to the focused element, so click first if the page listens on its stage |
+| `{ "at", "mark": "<id>", "anchor"?, "label"?, "look"? }` | Log a mark event at that frame, like a mark in `marks`. The anchor's box is read once the frame has painted |
+
+One action a step. No cursor is drawn. Clicks and keys are logged as events
+the way a screen take logs them, so the camera follows a click; a move logs
+nothing. A step after the take's end never happens (a warning).
+
 ## Scenes that use takes
 
 | Scene | How it names a recording |
 |---|---|
-| `clip` | `"take": "after"`, or `"src": "clips/x.mp4"` for an existing file. Not both |
+| `clip` | `"take": "after"`, or `"src": "clips/x.mp4"` for an existing file. Not both. A figure take plays here like any other |
 | `split` | `"before": { "take": "old" }` and `"after": { "take": "new" }` (each side also takes `src`, `trimStartSec` and `label`) |
 | `image` | `"src"` only. An image is a still; a `take` is an error. Make one with `capture.mjs shot` |
 
@@ -317,7 +408,7 @@ Each run prints one line per stage with its seconds.
 | `camera` | Writes `build/video.json`, then runs `auto-camera.mjs` on it | A take used by a scene has no clip; `autoCamera` on a scene whose clip has no events file; a callout names a mark the events file does not have |
 | `check` | `check-video.mjs` against the real files (it also warns when a callout shows for over 0.3 s where the camera is not looking) | A trim runs past the end of a clip; `aspect` does not match the clip; a file is missing; a callout has no box; a camera key outside its scene |
 | `render` | `compose.mjs`: the whole video on the GPU, then the contact sheet | A file cannot be found or decoded even through a proxy; an unknown scene type or transition; no master was written |
-| `deliver` | `deliver.mjs`: PR copy, captions, chapters, poster, GIF, frozen and black scan | ffmpeg fails. A frozen or black stretch, or a PR copy over the cap, is a warning, not a failure |
+| `deliver` | `deliver.mjs`: PR copy, captions, chapters, poster, GIF, frozen and black scan (scenes that play a figure: black only) | ffmpeg fails. A frozen or black stretch, or a PR copy over the cap, is a warning, not a failure |
 
 When a stage fails the run stops, prints `FAILED at <stage>:` with the
 message, every warning so far, and where the logs are. The warnings that
@@ -346,8 +437,19 @@ The `plan` stage records a take when any of these is true:
 | `no take.json (not recorded by this tool)` | The clip is there but has no fingerprint |
 | `take changed` | The fingerprint differs |
 
-The fingerprint (`clips/<take>.take.json`, field `hash`) is a hash of the
-take's resolved URL, its `duration` (given or estimated), its `steps`, its
+A figure take's fingerprint covers its `page` file and every regular file in
+the page's folder, not its subfolders, read in name order. Files over 20 MB,
+dotfiles, Markdown, video files (`.mp4`, `.mov`, `.webm`, `.gif`),
+`*.events.json`, `*.take.json`, `*.sheet.png`, any `demo.json` or
+`*.demo.json`, and the demo file itself are skipped. It also covers the take's
+`duration`, `timeline`, `marks`, `figureSteps`, `seed`, `transitions`,
+`viewport`, `dpr`, capture options (`fps`, `crf`, `jpegQuality`, `encoder`,
+with the demo's `capture` defaults merged in) and whether it was a draft
+(`--draft`). Editing the figure page re-records it, and editing only a
+caption does not. Keep the page in its own folder.
+
+The fingerprint of any other take (`clips/<take>.take.json`, field `hash`) is
+a hash of the take's resolved URL, its `duration` (given or estimated), its `steps`, its
 `setup`, its `pageSetup` and its capture options (the shared ones merged with
 the take's, sorted). Change any of those and the take is recorded again.
 
@@ -358,6 +460,8 @@ It cannot see:
   wrong for a reason outside `demo.json`.
 - What `setup` does: the fingerprint holds the command text, not the script
   behind it.
+- A page on disk named by a url with no scheme: the fingerprint holds its
+  path, not its contents.
 - Data on the server, the time of day, the Chrome version or the machine.
 - `rehearse`, and anything in `scenes`, `theme`, `transitions` and the
   other video keys. Those are the cut; they never trigger a recording.
@@ -369,6 +473,7 @@ An option set to `false` is the same as an option left out.
 ```bash
 node scripts/demo.mjs <demo.json> [options]
 node scripts/demo.mjs init <dir> [--url <base>] [--name <name>] [--style <name>] [--force]
+node scripts/demo.mjs init <dir> --figure --name <name>
 ```
 
 | Option | Does |
@@ -383,6 +488,8 @@ node scripts/demo.mjs init <dir> [--url <base>] [--name <name>] [--style <name>]
 | `--styles a,b` or `--styles all` | Compare looks (below). Needs two or more styles; not with `--style`, `--only capture`, `--only deliver` or `--takes` |
 | `--stale-ok` | Render even if a clip's take changed or has no `take.json` (normally the `camera` stage stops and names the take) |
 | `--no-rehearse` | Skip the dry run |
+| `--draft` | Record figure takes at 30 fps, DPR 1 and JPEG quality 80, for fast review rounds. The take's `take.json` says `draft: true`, and the draft flag is in the fingerprint, so the next run without `--draft` records it again. Screen takes are not affected |
+| `--workers n` | Tabs that record one seekable figure take at once (`"seekable": true` in its hook). The default is half the cores, at most 4; `1` records in one tab. The frames are the same whatever the number, so it is not in the fingerprint. A figure that is not seekable, and every screen take, ignore it |
 | `--max-mb 10` | Size cap for the PR copy |
 | `--gif 12:6` | Also a GIF of 6 seconds starting at 12 |
 | `--port 9222` | The Chrome debugging port (also handed to `chrome.sh`) |
@@ -390,6 +497,16 @@ node scripts/demo.mjs init <dir> [--url <base>] [--name <name>] [--style <name>]
 | `--json` | Print the result as one JSON object on stdout; progress goes to stderr |
 | `--force` | Allow a folder under `/tmp` |
 | `--help` | Print the usage |
+
+`init --figure` writes three files: `demo.json` (a figure take, a clip scene
+with two `atMark` captions and a `list` end card), `figure/index.html` (a small
+stand-in figure: a growing bar, a spring marker, a legend and two marks, built
+with `figureHook`) and `figure/figure-hook.js`. The page carries an inlined
+copy of the hook, so it opens straight from disk in a browser; the `.js` file
+beside it is the same code, to copy next to your own page. The `demo.json`
+validates when it is written (the command prints the error and warning counts)
+and renders at once, with no Chrome from `chrome.sh`. Replace `index.html` with
+an anatomy build (`figure.md`).
 
 `init` refuses to overwrite a `demo.json` (`--force` does) and refuses a
 temporary folder. `init --style <name>` writes `"style": "<name>"` into the

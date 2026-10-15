@@ -4,6 +4,9 @@
 // read. Imported by check-video.mjs, deliver.mjs and demo.mjs; it has no side
 // effects of its own.
 import { createHash } from 'node:crypto';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 // ---------------------------------------------------------------- timeline
 
@@ -115,24 +118,61 @@ const RECORD_ONLY = new Set(['slow', 'lossless', 'fps', 'crf', 'jpegQuality', 'e
 export const TAKE_KEYS = ['url', 'duration', 'steps', 'setup', 'pageSetup', 'rehearse', ...Object.keys(CAPTURE_OPTIONS)];
 export const STEP_KEYS = ['wait', 'waitFor', 'move', 'click', 'type', 'key', 'scroll', 'eval', 'mark', 'camera', 'redact',
   'dur', 'cps', 'instant', 'look', 'target', 'fatal', 'actionTimeout'];
+// A caption in a clip scene's `captions`: at a time, or `leadSec` (0.6) before a mark.
+export const CAPTION_KEYS = ['atSec', 'atMark', 'leadSec', 'text', 'tag'];
+
+// A figure take ("source": "figure") records an HTML figure frame by frame
+// (capture-figure.mjs) instead of a screen. Of the capture options it takes
+// only these; the rest describe a browser session it does not have.
+export const FIGURE_CAPTURE = ['fps', 'crf', 'jpegQuality', 'encoder'];
+export const FIGURE_TAKE_KEYS = ['source', 'page', 'viewport', 'dpr', 'timeline', 'duration', 'marks', 'figureSteps',
+  'seed', 'transitions', ...FIGURE_CAPTURE];
+export const FIGURE_MARK_KEYS = ['id', 't', 'anchor', 'label', 'poster', 'look'];
+export const FIGURE_STEP_KEYS = ['at', 'move', 'dur', 'key', 'click', 'mark', 'anchor', 'label', 'look'];
+// What to write instead of a screen-take key on a figure take.
+export const FIGURE_INSTEAD = {
+  url: 'a figure take records its "page" (an HTML file next to demo.json), not a url',
+  steps: 'use "marks" for named moments and "figureSteps" for timed input, not "steps"',
+  setup: 'a figure take runs no setup command; build the page before you record',
+  pageSetup: 'the page reads window.__figureRecording (figure-hook.js exports it as `recording`) to start still, instead of pageSetup',
+  rehearse: 'a figure take has no rehearsal; check frames with capture-figure.mjs --preview',
+  width: 'use "viewport": [w, h], not width/height',
+  height: 'use "viewport": [w, h], not width/height',
+  scale: 'use "dpr", not scale',
+  mobile: 'use "viewport" (for example [390, 844]) and "dpr", not mobile',
+  dark: 'draw the figure in the colours you want; a figure take emulates no colour scheme',
+  hide: 'a figure page has nothing to hide; leave it out of the page',
+  hideFloating: 'a figure page has nothing to hide; leave it out of the page',
+  keep: 'a figure page has nothing to hide; leave it out of the page',
+  redact: 'draw no private data in a figure; leave it out of the page',
+  cursorScale: 'a figure take draws no cursor',
+  noCursor: 'a figure take draws no cursor',
+  noRipple: 'a figure take draws no cursor',
+  slow: 'a figure take is stepped frame by frame, so it never needs slowing down',
+  lossless: 'use "jpegQuality" (up to 100) for sharper frames',
+  allowRedirect: 'a figure take loads a local file, so there is no redirect to allow',
+};
+export const isFigureTake = (t) => !!t && typeof t === 'object' && t.source !== undefined;
 
 // ---------------------------------------------------------------- takes
 
 export const SAFE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 export const clipPath = (take) => `clips/${take}.mp4`;
 
-// Everything one take needs, with demo-level defaults folded in.
-export const takeSpec = (demo, name) => {
+// Everything one take needs, with demo-level defaults folded in. `where` is
+// the demo.json's folder (a figure take's page is relative to it), or
+// { dir, file } to also name the demo file itself.
+export const takeSpec = (demo, name, where = {}) => {
   const t = demo.takes?.[name] ?? {};
+  if (isFigureTake(t)) return figureTakeSpec(demo, name, t, typeof where === 'string' ? { dir: where } : where);
   const options = {};
   for (const k of Object.keys(CAPTURE_OPTIONS)) {
     const v = t[k] ?? demo.capture?.[k];
     if (v !== undefined && v !== null && v !== false) options[k] = Array.isArray(v) ? v.join(', ') : v;
   }
-  let url = t.url ?? demo.url;
-  try {
-    if (demo.url && t.url) url = new URL(t.url, demo.url).href;
-  } catch {}
+  let url = takeUrl(t.url, demo.url);
+  const file = localPage(url, typeof where === 'string' ? where : where?.dir);
+  if (file) url = pathToFileURL(file).href;
   return {
     name,
     url,
@@ -142,6 +182,50 @@ export const takeSpec = (demo, name) => {
     pageSetup: t.pageSetup,
     // How to rehearse, not how to record: kept out of the fingerprint.
     rehearse: t.rehearse,
+    options,
+  };
+};
+
+// A screen take's url: its own, resolved against the top-level url when both
+// are there, else whichever is given.
+export const takeUrl = (own, base) => {
+  let url = own ?? base;
+  try {
+    if (base && own) url = new URL(own, base).href;
+  } catch {}
+  return url;
+};
+// A url with no scheme ("figure/app.html") names a page on disk, relative to
+// the demo.json folder (`dir`), and records as a file:// url. Before, such a
+// url could not load at all, so no take that worked reads differently.
+export const hasScheme = (url) => /^[A-Za-z][A-Za-z0-9+.-]*:/.test(url);
+export const localPage = (url, dir) => (typeof url === 'string' && url && dir && !hasScheme(url) ? resolve(dir, url) : null);
+
+// A figure take: the page and how figure time runs. demo.url and the demo's
+// screen capture options don't apply; fps, crf, jpegQuality and encoder do.
+const figureTakeSpec = (demo, name, t, { dir = '.', file } = {}) => {
+  const options = {};
+  for (const k of FIGURE_CAPTURE) {
+    const v = t[k] ?? demo.capture?.[k];
+    if (v !== undefined && v !== null && v !== false) options[k] = v;
+  }
+  const timeline = Array.isArray(t.timeline) ? t.timeline : null;
+  return {
+    name,
+    source: 'figure',
+    page: resolve(dir, String(t.page ?? '')),
+    // The take's length: the timeline's last video second, else `duration`.
+    duration: timeline ? timeline.at(-1)?.[0] : t.duration,
+    timeline,
+    viewport: t.viewport ?? [1920, 1080],
+    dpr: t.dpr ?? 1.5,
+    marks: t.marks ?? [],
+    figureSteps: t.figureSteps ?? [],
+    seed: t.seed ?? 1,
+    transitions: t.transitions ?? 'off',
+    // Left out of the page folder's fingerprint (it is there when the page sits next to it).
+    demoFile: file ? resolve(file) : null,
+    steps: [],
     options,
   };
 };
@@ -161,9 +245,10 @@ export const estimateDuration = (steps) => {
   return Math.max(3, Math.ceil(sec + 1));
 };
 
-// The capture.mjs arguments for a take. `rehearse` leaves out what only a
-// recording needs.
-export const captureArgs = (take, { rehearse = false, port, stepsFile, out, allowTemp = false } = {}) => {
+// The capture.mjs arguments for a take (capture-figure.mjs for a figure
+// take). `rehearse` leaves out what only a recording needs.
+export const captureArgs = (take, { rehearse = false, port, stepsFile, out, allowTemp = false, draft = false, workers } = {}) => {
+  if (take.source === 'figure') return figureArgs(take, { out, allowTemp, draft, workers });
   const a = ['clip', '--url', take.url, '--steps', stepsFile];
   if (port) a.push('--port', String(port));
   for (const [k, v] of Object.entries(take.options)) {
@@ -179,16 +264,64 @@ export const captureArgs = (take, { rehearse = false, port, stepsFile, out, allo
   return a;
 };
 
+// `workers` is how many tabs may share a seekable figure: it changes the
+// time a take takes, never its frames, so it is not in the fingerprint.
+const figureArgs = (take, { out, allowTemp, draft, workers }) => {
+  const [w, h] = take.viewport;
+  const a = ['--page', take.page, '--out', out, '--viewport', `${w}x${h}`, '--dpr', String(take.dpr)];
+  if (take.timeline) a.push('--timeline', JSON.stringify(take.timeline));
+  else a.push('--duration', String(take.duration));
+  if (take.marks.length) a.push('--marks', JSON.stringify(take.marks));
+  if (take.figureSteps.length) a.push('--steps', JSON.stringify(take.figureSteps));
+  a.push('--seed', String(take.seed), '--transitions', take.transitions);
+  for (const [k, v] of Object.entries(take.options)) a.push(CAPTURE_OPTIONS[k].flag, String(v));
+  if (draft || take.draft) a.push('--draft');
+  if (workers) a.push('--workers', String(workers));
+  if (allowTemp) a.push('--allow-temp');
+  return a;
+};
+
 // A fingerprint of everything that defines a take. Change a step, the url,
 // the duration or a capture option and the clip is stale; change the APP and
-// nothing here can tell, so that needs --retake.
+// nothing here can tell, so that needs --retake. A figure take also covers
+// its page and the files next to it, so editing the figure re-records it.
 export const HASH_VERSION = 1;
-export const takeHash = (take) =>
-  createHash('sha1')
+export const takeHash = (take) => {
+  if (take.source === 'figure') return figureHash(take);
+  return createHash('sha1')
     .update(JSON.stringify([HASH_VERSION, take.url, take.duration, take.steps, take.setup ?? null, take.pageSetup ?? null,
       Object.fromEntries(Object.entries(take.options).sort(([a], [b]) => a.localeCompare(b)))]))
     .digest('hex')
     .slice(0, 16);
+};
+
+// Files in a figure's folder that are not part of the figure: the demo's own
+// files (a page often sits next to demo.json) and what a run writes.
+const NOT_FIGURE = /^\.|\.md$|\.(mp4|mov|webm|gif)$|\.events\.json$|\.take\.json$|\.sheet\.png$|(^|\.)demo\.json$/i;
+const FIGURE_FILE_MAX = 20 * 1024 * 1024;
+const sortKeys = (o) => Object.fromEntries(Object.entries(o).sort(([a], [b]) => a.localeCompare(b)));
+const figureHash = (take) => {
+  const h = createHash('sha1');
+  h.update(JSON.stringify([HASH_VERSION, 'figure', take.duration, take.timeline, take.marks, take.figureSteps, take.seed,
+    take.transitions, take.viewport, take.dpr, !!take.draft, sortKeys(take.options)]));
+  // The page, then every file beside it (not in subfolders), by name.
+  const page = take.page;
+  h.update('\0page\0');
+  try { h.update(readFileSync(page)); } catch { h.update('\0missing\0'); }
+  const dir = dirname(page);
+  let names = [];
+  try { names = readdirSync(dir).sort(); } catch {}
+  for (const n of names) {
+    const f = join(dir, n);
+    if (f === page || f === take.demoFile || NOT_FIGURE.test(n)) continue;
+    let st;
+    try { st = statSync(f); } catch { continue; }
+    if (!st.isFile() || st.size > FIGURE_FILE_MAX) continue;
+    h.update(`\0${n}\0`);
+    try { h.update(readFileSync(f)); } catch {}
+  }
+  return h.digest('hex').slice(0, 16);
+};
 
 // Takes that scenes refer to, in order of first use.
 export const takesUsed = (demo) => {

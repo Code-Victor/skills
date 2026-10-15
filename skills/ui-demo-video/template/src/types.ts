@@ -92,7 +92,19 @@ export type Callout = {
 };
 
 /** A caption that shows from atSec until the next one, or the scene's end. */
-export type TimedCaption = { atSec: number; text: string; tag?: string };
+export type TimedCaption = {
+  atSec: number;
+  text: string;
+  tag?: string;
+  /**
+   * In demo.json: a mark's id to time the caption by, instead of atSec.
+   * scripts/auto-camera.mjs writes atSec from it (the mark's scene time less
+   * leadSec), so a rendered spec always has atSec.
+   */
+  atMark?: string;
+  /** With atMark: seconds the caption comes up before its mark. Default 0.6. */
+  leadSec?: number;
+};
 
 /** Options for scripts/auto-camera.mjs; see that file for what each does. */
 export type AutoCamera = {

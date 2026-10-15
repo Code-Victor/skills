@@ -20,6 +20,9 @@
 //     the mark, for up to `maxSec` (2.5), and ends just after the next click
 //     or key: that usually changes what the callout circles. When the camera
 //     has to move to it first, it starts as the camera arrives instead.
+//   - captions with "atMark": "<label>": sets `atSec` to `leadSec` (0.6)
+//     before that mark, every run, so both renderers just read atSec. A
+//     figure take's marks (capture-figure.mjs) are mark events like any other.
 //
 // Cause and effect: a mark that follows a click or typing in the same shot is
 // that action's result (a toast, a saved row). The camera stays on the action
@@ -72,6 +75,7 @@ const DEFAULTS = {
   see: 0.6, farSec: 0.7,
 };
 const CALLOUT_LEAD = 0.2;   // a callout the camera moves to starts this long before the camera lands
+const CAPTION_LEAD = 0.6;   // a caption with atMark (and no leadSec) starts this long before its mark
 const round = (v, n = 3) => +v.toFixed(n);
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
@@ -280,6 +284,20 @@ for (const [i, scene] of spec.scenes.entries()) {
     c.box = m.box;
     timeCallout(c);
     marked.push(c);
+    changed++;
+  }
+  // Captions timed to a mark: atSec is the mark's scene time less leadSec, so
+  // the words are up just before it happens and stay with it when the pacing
+  // changes. A mark the recording lacks leaves atSec unset; check-video says so.
+  for (const c of scene.captions ?? []) {
+    if (typeof c.atMark !== 'string') continue;
+    const m = ev?.events.find((e) => e.type === 'mark' && e.label === c.atMark);
+    if (!m) {
+      delete c.atSec;
+      console.log(`scene ${i}: caption atMark "${c.atMark}": no such mark in ${src}.events.json`);
+      continue;
+    }
+    c.atSec = round(Math.max(0, sceneTime(scene)(m.t) - (c.leadSec ?? CAPTION_LEAD)));
     changed++;
   }
   if (scene.autoCamera && scene.type === 'clip') {

@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Build</title>
+<style>
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+/* Sizes are in em: 16px on a laptop, larger on a wide screen, so the card
+   stays readable in a recording made at the screen's own size. */
+body{display:grid;place-items:center;background:#f6f6f3;color:#1a1a1d;font:clamp(16px,1.25vw,24px)/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+main{width:min(32.5em,100% - 32px);padding:2em;border-radius:1em;background:#fff;box-shadow:0 0 0 1px #0000000f,0 .75em 2em -.75em #00000026}
+h1{margin:0 0 .18em;font-size:1.375em;font-weight:600;letter-spacing:-.01em}
+p{margin:0;color:#6b6b70}
+button{margin-top:1.5em;padding:.75em 1.25em;border:0;border-radius:.625em;background:#1a1a1d;color:#fff;font:inherit;font-weight:500;cursor:pointer}
+button:disabled{background:#8a8a8f;cursor:default}
+button:focus-visible{outline:2px solid #3e63dd;outline-offset:2px}
+#result{width:fit-content;min-height:1.5em;margin-top:1em;font-size:1.25em;font-weight:600;font-variant-numeric:tabular-nums}
+#detail{min-height:1.6em;font-size:.9375em}
+</style>
+</head>
+<body>
+<main>
+<h1>Build</h1>
+<p>2 machines in parallel. Fictional step times, invented for this example.</p>
+<button id="run" type="button">Run build</button>
+<div id="result" role="status" aria-live="polite"></div>
+<p id="detail"></p>
+</main>
+<script>
+const button = document.getElementById('run');
+const result = document.getElementById('result');
+const detail = document.getElementById('detail');
+button.addEventListener('click', () => {
+  button.disabled = true;
+  result.textContent = 'Building…';
+  detail.textContent = '';
+  setTimeout(() => {
+    result.textContent = 'Built in 2 m 10 s';
+    detail.textContent = '1 m 30 s faster than one machine (3 m 40 s)';
+    button.disabled = false;
+  }, 900);
+});
+</script>
+</body>
+</html>

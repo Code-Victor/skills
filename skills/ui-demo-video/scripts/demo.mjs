@@ -2,6 +2,7 @@
 // One file in, one finished demo video out.
 //
 //   node scripts/demo.mjs init <dir> [--url http://localhost:3000] [--name my-demo] [--style <name>]
+//   node scripts/demo.mjs init <dir> --figure [--name my-demo]   (an explainer from a figure page)
 //   node scripts/demo.mjs <demo.json> [options]
 //
 // You write demo.json (a video.json plus the takes to record, see
@@ -19,6 +20,11 @@
 //   8 render     scripts/compose.mjs: the whole video on the GPU, in seconds
 //   9 deliver    PR copy, captions, chapters, poster, frozen/black scan
 //  10 summary    seconds per stage, what was reused, warnings, what to look at
+//
+// A take with "source": "figure" is an HTML figure, not a screen: it is
+// recorded frame by frame by capture-figure.mjs in a Chrome of its own, so it
+// needs no background Chrome, rehearsal or setup, and its fingerprint covers
+// the page and the files beside it (edit the figure and it records again).
 //
 // Next to demo.json it keeps:
 //   clips/<take>.mp4 (+ .events.json, .sheet.png) and clips/<take>.take.json,
@@ -53,6 +59,12 @@
 //   --no-rehearse        skip the dry run
 //   --max-mb 10          size cap for the PR copy
 //   --gif <start:dur>    also a GIF excerpt, e.g. 12:6
+//   --draft              record figure takes quick, for review rounds: 30 fps,
+//                        DPR 1, JPEG quality 80. Their take.json says draft, and
+//                        the next run without --draft records them again
+//   --workers n          tabs that record one seekable figure take at once
+//                        (default half the cores, at most 4; 1 = one tab). A
+//                        figure that is not seekable always uses one
 //   --port 9222          Chrome's debugging port
 //   --parallel 1         takes rehearsed and recorded at once. Recording is
 //                        limited by the CPU, so more than 1 only helps on an
@@ -70,6 +82,7 @@
 // page needs a sign-in (run scripts/chrome.sh --login <url>).
 import { spawn, spawnSync } from 'node:child_process';
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { availableParallelism } from 'node:os';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { checkDemo, checkSpec } from './check-video.mjs';
@@ -83,7 +96,7 @@ const secs = (t0 = T0) => +((Date.now() - t0) / 1000).toFixed(1);
 
 // ---------------------------------------------------------------- arguments
 
-const VALUE = new Set(['retake', 'takes', 'only', 'max-mb', 'gif', 'port', 'parallel', 'url', 'name', 'style', 'styles']);
+const VALUE = new Set(['retake', 'takes', 'only', 'max-mb', 'gif', 'port', 'parallel', 'workers', 'url', 'name', 'style', 'styles']);
 const argv = process.argv.slice(2);
 const pos = [];
 const opt = {};
@@ -98,10 +111,11 @@ for (let i = 0; i < argv.length; i++) {
 }
 const USAGE = `usage:
   demo.mjs init <dir> [--url <base>] [--name <name>] [--style <name>] [--force]
+  demo.mjs init <dir> --figure [--name <name>] [--style <name>] [--force]
   demo.mjs <demo.json> [--retake a,b|all] [--takes a,b] [--only capture|render|deliver]
                        [--style <name> | --styles a,b,c|all]
                        [--no-deliver] [--no-rehearse] [--max-mb 10] [--gif start:dur]
-                       [--port 9222] [--parallel 1] [--json] [--force]
+                       [--draft] [--workers n] [--port 9222] [--parallel 1] [--json] [--force]
 Read the top of this file for the stages and the folder layout. After you change
 the APP (not demo.json) use --retake: the fingerprint cannot see your code.`;
 if (opt.help || opt.h || !pos.length) {
@@ -116,6 +130,12 @@ for (const k of ['style', 'styles']) {
 }
 if (opt.style && opt.styles) {
   console.error('--style renders one look, --styles compares several: use one of them');
+  process.exit(2);
+}
+// Tabs per seekable figure take: half the cores, at most 4.
+const WORKERS = opt.workers === undefined ? Math.min(4, Math.max(1, Math.floor(availableParallelism() / 2))) : +opt.workers;
+if (!(Number.isInteger(WORKERS) && WORKERS >= 1)) {
+  console.error(`--workers must be a whole number of tabs, 1 or more (got ${opt.workers}); 1 records every figure take in one tab`);
   process.exit(2);
 }
 const JSON_OUT = !!opt.json;
@@ -166,8 +186,11 @@ if (pos[0] === 'init') {
   refuseTemp(dir);
   const name = opt.name ?? (basename(dir).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+/, '') || 'demo');
   const file = join(dir, 'demo.json');
-  if (existsSync(file) && !opt.force) {
-    console.error(`${file} already exists (--force overwrites it)`);
+  const figDir = join(dir, 'figure');
+  const files = opt.figure ? [file, join(figDir, 'index.html'), join(figDir, 'figure-hook.js')] : [file];
+  const there = files.filter((f) => existsSync(f));
+  if (there.length && !opt.force) {
+    console.error(`${there.join(', ')} already exist${there.length === 1 ? 's' : ''} (--force overwrites)`);
     process.exit(2);
   }
   if (opt.style) {
@@ -177,7 +200,33 @@ if (pos[0] === 'init') {
       process.exit(2);
     }
   }
-  const starter = {
+  // An explainer: a stand-in figure page (a bar over figure time 0 to 10, a
+  // marker on a spring, two marks), recorded frame by frame, with captions
+  // timed to its marks.
+  const figureStarter = {
+    _note: 'A starter explainer. figure/index.html is a stand-in figure: replace it with your own (an anatomy build that calls figureHook(), see references/figure.md) and keep "page" pointing at it. Captions time themselves to the figure\'s marks with "atMark". Editing anything in figure/ records the take again on the next run.',
+    name,
+    style: opt.style ?? 'studio',
+    takes: {
+      figure: {
+        source: 'figure',
+        page: 'figure/index.html',
+        _timeline: 'Video seconds to figure time: the bar fills from 0 to 10 over 4 s, easing out, then holds for 2 s while the marker settles.',
+        timeline: [[0, 0], [4, 10], [6, 10]],
+      },
+    },
+    scenes: [
+      {
+        type: 'clip', take: 'figure', durationSec: 6,
+        captions: [
+          { atMark: 'halfway', text: 'Halfway: five of ten' },
+          { atMark: 'done', text: 'Full, and the marker settles' },
+        ],
+      },
+      { type: 'list', title: 'Your figure, frame by frame', items: ['Swap in your own figure', 'Time captions to its marks'], durationSec: 4 },
+    ],
+  };
+  const starter = opt.figure ? figureStarter : {
     name,
     ...(opt.style ? { style: opt.style } : {}),
     url: opt.url ?? 'http://localhost:3000',
@@ -225,11 +274,23 @@ if (pos[0] === 'init') {
     ],
   };
   mkdirSync(dir, { recursive: true });
+  if (opt.figure) {
+    // The page carries its own copy of figure-hook.js, so it opens straight
+    // from disk (a browser blocks module imports from file://).
+    const hook = readFileSync(join(HERE, 'figure-hook.js'), 'utf8');
+    const page = readFileSync(join(HERE, 'figure-starter.html'), 'utf8');
+    const IMPORT = "import { figureHook, monotone, recording } from './figure-hook.js';";
+    if (!page.includes(IMPORT)) throw new Error('figure-starter.html no longer imports figure-hook.js the way init expects');
+    mkdirSync(figDir, { recursive: true });
+    writeFileSync(join(figDir, 'figure-hook.js'), hook);
+    writeFileSync(join(figDir, 'index.html'), page.replace(IMPORT, `// figure-hook.js, inlined (figure-hook.js next to this page is the same code).\n${hook.replace(/^export /gm, '').trim()}`));
+  }
   writeFileSync(file, `${JSON.stringify(starter, null, 2)}\n`);
-  const r = checkDemo(starter);
-  console.log(`wrote ${file}  (${r.errors.length} errors, ${r.warnings.length} warnings)`);
+  const r = checkDemo(starter, { dir });
+  console.log(`wrote ${file}${opt.figure ? ` and ${figDir}/` : ''}  (${r.errors.length} errors, ${r.warnings.length} warnings)`);
   for (const m of [...r.errors, ...r.warnings]) console.log(`  ${m}`);
-  console.log(`Edit the urls, steps and captions, then: node ${process.argv[1]} ${file}`);
+  if (opt.figure) console.log(`Open ${join(figDir, 'index.html')} in a browser to see the figure play. Replace it with your own figure, then: node ${process.argv[1]} ${file}`);
+  else console.log(`Edit the urls, steps and captions, then: node ${process.argv[1]} ${file}`);
   process.exit(r.errors.length ? 1 : 0);
 }
 
@@ -386,7 +447,7 @@ await stage('validate', () => {
   } catch (e) {
     return fail('validate', `${demoFile} is not valid JSON: ${e.message}`);
   }
-  const r = checkDemo(demo);
+  const r = checkDemo(demo, { dir });
   const extra = [];
   used = takesUsed(demo);
   const defined = Object.keys(demo?.takes && typeof demo.takes === 'object' ? demo.takes : {});
@@ -410,7 +471,10 @@ await stage('validate', () => {
   }
   name = demo.name || basename(demoFile).replace(/\.?demo\.json$|\.json$/, '');
   if (!SAFE_NAME.test(name)) name = basename(dir).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[-.]+/, '') || 'demo';
-  takes = Object.fromEntries(used.map((n) => [n, takeSpec(demo, n)]));
+  takes = Object.fromEntries(used.map((n) => [n, takeSpec(demo, n, { dir, file: demoFile })]));
+  // --draft: figure takes record quick (30 fps, DPR 1, JPEG 80). It is part of
+  // their fingerprint, so a run without it records them again in full.
+  if (opt.draft) for (const t of Object.values(takes)) if (t.source === 'figure') t.draft = true;
   for (const d of Object.values(paths)) mkdirSync(d, { recursive: true });
   summary.name = name;
   // The style this run renders in: the flag, else what demo.json says, else
@@ -441,7 +505,10 @@ if (doCapture) {
       if (retake.has(n)) why[n] = 'retake';
       else if (!have) why[n] = 'no clip yet';
       else if (!prev) why[n] = 'no take.json (not recorded by this tool)';
-      else if (prev.hash !== takeHash(takes[n])) why[n] = 'take changed';
+      else if (prev.hash !== takeHash(takes[n])) {
+        const draftOnly = takes[n].source === 'figure' && !!prev.draft !== !!takes[n].draft;
+        why[n] = draftOnly ? (takes[n].draft ? 'draft' : 'full quality after a draft') : 'take changed';
+      }
       else summary.reused.push(n);
     }
     toRecord = Object.keys(why);
@@ -450,8 +517,12 @@ if (doCapture) {
       summary.reused.length ? `reuse ${summary.reused.join(', ')}` : ''].filter(Boolean).join('; ');
   });
 
+  // Figure takes run a Chrome of their own; only screen takes need chrome.sh's.
+  const isFigure = (n) => takes[n].source === 'figure';
+  const screenTakes = toRecord.filter((n) => !isFigure(n));
   if (toRecord.length) {
-    await stage('chrome', async () => {
+    if (!screenTakes.length) stages.push({ name: 'chrome', sec: 0, note: 'not needed (figure takes run their own)' });
+    else await stage('chrome', async () => {
       // Always through chrome.sh: it starts the background Chrome when none is
       // up, and when a --login window is open it takes the session back into
       // the background one. Recording in the login window would work, but the
@@ -465,7 +536,7 @@ if (doCapture) {
       return tail(r.text, 1).replace(/^Chrome /, '').replace(/ \(profile: .*$/, ')');
     });
 
-    for (const n of toRecord) writeFileSync(stepsFile(n), `${JSON.stringify(takes[n].steps, null, 1)}\n`);
+    for (const n of screenTakes) writeFileSync(stepsFile(n), `${JSON.stringify(takes[n].steps, null, 1)}\n`);
 
     // The take's `setup` command (reset the data, seed the user) runs in the
     // demo folder right before the page loads.
@@ -486,7 +557,7 @@ if (doCapture) {
 
     // A rehearsal really clicks. A take that changes data needs a `setup` that
     // resets it, or `"rehearse": false` so the recording is the first run.
-    const rehearsable = (n) => takes[n].steps.length && takes[n].rehearse !== false;
+    const rehearsable = (n) => !isFigure(n) && takes[n].steps.length && takes[n].rehearse !== false;
     if (!opt['no-rehearse'] && toRecord.some(rehearsable)) {
       await stage('rehearse', async () => {
         const todo = toRecord.filter(rehearsable);
@@ -509,10 +580,35 @@ if (doCapture) {
       });
     }
 
+    // A figure take: capture-figure.mjs steps the page frame by frame in a
+    // Chrome of its own. No setup, no sign-in, no slow-down to pick. A frame
+    // costs about 85 ms at dpr 1.5 (more pixels, more time), so the time
+    // limit follows the frame count, with room for a busy machine.
+    const recordFigure = async (n) => {
+      const t = takes[n];
+      const fps = +(t.options.fps ?? 60), frames = Math.round(t.duration * fps);
+      const timeoutSec = Math.max(300, Math.ceil(frames * 0.085 * (t.dpr / 1.5) ** 2 * 4 + 120));
+      const r = await run(`record-${n}`, process.execPath,
+        [join(HERE, 'capture-figure.mjs'), ...captureArgs(t, { out: clipFile(n), allowTemp: !!opt.force, workers: WORKERS }), '--json'], { timeoutSec });
+      const j = lastJson(r.text);
+      if (r.code !== 0 || !j?.ok) {
+        const why = r.timedOut ? `timed out after ${timeoutSec} s (killed by the runner; the machine may be overloaded, see build/logs)` : (j?.error ?? tail(r.text, 8));
+        return { ok: false, code: r.code, text: why };
+      }
+      writeFileSync(takeFile(n), `${JSON.stringify({
+        hash: takeHash(t), source: 'figure', page: relative(dir, t.page), duration: t.duration, recordedAt: new Date().toISOString(),
+        width: j.width, height: j.height, durationSec: j.durationSec, fps: j.fps, frames: j.frames, msPerFrame: j.msPerFrame,
+        wallSec: j.wallSec, mode: j.mode, workers: j.workers ?? 1, draft: !!j.draft,
+      }, null, 1)}\n`);
+      for (const w of j.warnings ?? []) warn(`take ${n}: ${w}`);
+      return { ok: true, j };
+    };
+
     await stage('record', async () => {
       let slots = Math.min(parallel, toRecord.length);
       const res = await pool(toRecord, parallel, async (n) => {
         rmSync(takeFile(n), { force: true }); // a failed take must never look reusable
+        if (isFigure(n)) return recordFigure(n);
         const s = await runSetup(n, `record-${n}`);
         if (!s.ok) return s;
         const t = takes[n];
@@ -546,7 +642,9 @@ if (doCapture) {
       if (failed.length) return reportFailures('record', failed);
       summary.recorded = toRecord;
       slots = Math.min(slots, toRecord.length);
-      return `${toRecord.map((n) => `${n} ${res.get(n).j.wallSec}s`).join(', ')} (${slots} at a time)`;
+      const fig = (j) => ` (${j.frames} frames, ${j.msPerFrame} ms a frame, ${j.workers ?? 1} tab${(j.workers ?? 1) === 1 ? '' : 's'}${j.draft ? ', draft' : ''})`;
+      const each = (n) => `${n} ${res.get(n).j.wallSec}s${isFigure(n) ? fig(res.get(n).j) : ''}`;
+      return `${toRecord.map(each).join(', ')} (${slots} at a time)`;
     });
   } else {
     stages.push({ name: 'chrome', sec: 0, note: 'not needed' });
@@ -568,7 +666,11 @@ if (doRender) {
       const stale = used.flatMap((n) => {
         const t = readTake(n);
         if (!t) return [`take "${n}": no take.json next to its clip (the last recording failed, or the clip was not recorded by this tool)`];
-        if (t.hash !== takeHash(takes[n])) return [`take "${n}": demo.json changed since it was recorded`];
+        if (t.hash !== takeHash(takes[n])) {
+          if (t.source === 'figure' && !!t.draft !== !!takes[n].draft)
+            return [`take "${n}": recorded ${t.draft ? 'as a draft; add --draft to render it' : 'in full; leave out --draft to render it'}`];
+          return [`take "${n}": demo.json changed since it was recorded`];
+        }
         return [];
       });
       if (stale.length) return fail('camera', [...stale, `Record ${stale.length === 1 ? 'it' : 'them'} (demo.mjs ${basename(demoFile)} --takes ${used.filter((n) => stale.some((m) => m.startsWith(`take "${n}"`))).join(',')}), or render the old clips anyway with --stale-ok`]);
@@ -710,7 +812,7 @@ async function compareStyles() {
 
 async function deliver(master) {
   await stage('deliver', async () => {
-    const args = [join(HERE, 'deliver.mjs'), master, '--spec', specPath, '--out', paths.out, '--max-mb', String(maxMb), '--json'];
+    const args = [join(HERE, 'deliver.mjs'), master, '--spec', specPath, '--public', dir, '--out', paths.out, '--max-mb', String(maxMb), '--json'];
     if (opt.gif) args.push('--gif', opt.gif);
     const r = await run('deliver', process.execPath, args, { timeoutSec: 600 });
     const j = lastJson(r.text);

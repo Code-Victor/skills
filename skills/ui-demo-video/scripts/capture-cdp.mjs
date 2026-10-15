@@ -13,8 +13,9 @@ export async function browserInfo(port) {
 }
 
 // Connect to Chrome on `port` and open one background tab. Resolves to
-// { send, on, off, close, headless, info, targetId }.
-export async function openTab(port, { width, height } = {}) {
+// { send, on, off, close, headless, info, targetId }. `newWindow` puts it in
+// a window of its own even when headless (several tabs painting at once).
+export async function openTab(port, { width, height, newWindow = false } = {}) {
   let info;
   try {
     info = await browserInfo(port);
@@ -72,7 +73,7 @@ export async function openTab(port, { width, height } = {}) {
   const created = await raw('Target.createTarget', {
     url: 'about:blank',
     background: true,
-    ...(headless ? {} : { newWindow: true }),
+    ...(headless && !newWindow ? {} : { newWindow: true }),
     ...(width && height ? { width: Math.min(width, 3000), height: Math.min(height, 3000) } : {}),
   });
   const targetId = created.targetId;
