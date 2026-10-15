@@ -91,7 +91,7 @@ with `_` or `$`, or is called `comment` or `notes`, is ignored.
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `name` | string | the file name without `.demo.json`, else the folder name | Names the outputs (`out/<name>.mp4`). Letters, digits, dots, dashes and underscores; it must start with a letter or digit |
-| `url` | string | none | Base URL. A take's relative `url` is resolved against it. Must be a full URL such as `http://localhost:3000` |
+| `url` | string | none | Base URL. A take's relative `url` is resolved against it. A full URL such as `http://localhost:3000`, or a page on disk: a url with no scheme (`app/index.html`) is a file relative to the `demo.json` folder, recorded as a `file://` url. A missing file is an error |
 | `capture` | object | `{}` | Recording options shared by every take (next section). A take's own value wins |
 | `takes` | object | `{}` | Take name to take. Names follow the same character rule as `name`, because they name the clip files |
 | `scenes` | list | required | The scenes. Types and options: `scenes.md` |
@@ -200,7 +200,7 @@ A take is one recording: a URL, the steps to run on it, and options.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `url` | string | top-level `url` | Where to start. Relative paths resolve against the top-level `url`. One of the two is required |
+| `url` | string | top-level `url` | Where to start. Relative paths resolve against the top-level `url`. With no top-level `url`, a url with no scheme (`figure/app.html`) is a page on disk, relative to the `demo.json` folder, recorded as a `file://` url; no server needed. One of the two is required |
 | `steps` | list | `[]` | What the cursor does (`steps.md`). A take with no steps records the page sitting still, and warns |
 | `duration` | seconds | estimated | The least the clip may run. A clip runs to the end of its steps or to `duration`, whichever is later, so this is a floor and the steps decide the length |
 | `setup` | shell command | none | Runs in the demo folder (through `sh -c`) before the page loads, for every rehearsal and every recording. Reset data or seed a user here. Exit non-zero stops the stage. Time limit 5 minutes |
@@ -321,9 +321,9 @@ warning.
 | `{ "at", "key": "<name>" }` | Key down and up, such as `ArrowRight`. It goes to the focused element, so click first if the page listens on its stage |
 | `{ "at", "mark": "<id>", "anchor"?, "label"?, "look"? }` | Log a mark event at that frame, like a mark in `marks`. The anchor's box is read once the frame has painted |
 
-One action a step. No cursor is drawn, and clicks and keys are not logged as
-events, so the camera does not follow them: add a mark step where it should
-look. A step after the take's end never happens (a warning).
+One action a step. No cursor is drawn. Clicks and keys are logged as events
+the way a screen take logs them, so the camera follows a click; a move logs
+nothing. A step after the take's end never happens (a warning).
 
 ## Scenes that use takes
 
@@ -460,6 +460,8 @@ It cannot see:
   wrong for a reason outside `demo.json`.
 - What `setup` does: the fingerprint holds the command text, not the script
   behind it.
+- A page on disk named by a url with no scheme: the fingerprint holds its
+  path, not its contents.
 - Data on the server, the time of day, the Chrome version or the machine.
 - `rehearse`, and anything in `scenes`, `theme`, `transitions` and the
   other video keys. Those are the cut; they never trigger a recording.

@@ -371,8 +371,9 @@ What it does not drive, so keep it out of a clock-mode figure:
 - A `mark` step logs a mark event like any mark, with the box of its
   `anchor` read once the frame has painted. `look: false` keeps the camera
   off it.
-- No cursor is drawn, and clicks and keys are not logged as events, so the
-  camera does not chase them. Add a mark step where you want it to look.
+- No cursor is drawn. Clicks and keys are logged as events, as in a screen
+  take, so the auto-camera leans in on a click like any other; a move logs
+  nothing. Add a mark step where you want it to look at a result.
 
 Limits:
 
@@ -480,8 +481,7 @@ After recording:
   person's logged-in session. It is for self-contained pages.
 - **Hybrid demos.** A demo can have figure takes and screen takes together.
   `examples/hybrid.demo.json` records `figure/app.html` (click Run build,
-  mark the result), then plays the figure that explains it. A screen take
-  needs a URL, and a `file://` one works but must be absolute, so the
-  example serves the page from the take's `setup` with a node one-liner
-  that stops by itself 30 s after its last request. The screen take uses
+  mark the result), then plays the figure that explains it. Its `url` is
+  `"figure/app.html"`: a url with no scheme is a page on disk, relative to
+  the `demo.json` folder, so no server is needed. The screen take uses
   `scripts/chrome.sh`'s browser; the figure take still runs its own.

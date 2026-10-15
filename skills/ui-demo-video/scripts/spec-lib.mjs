@@ -6,6 +6,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 // ---------------------------------------------------------------- timeline
 
@@ -169,10 +170,9 @@ export const takeSpec = (demo, name, where = {}) => {
     const v = t[k] ?? demo.capture?.[k];
     if (v !== undefined && v !== null && v !== false) options[k] = Array.isArray(v) ? v.join(', ') : v;
   }
-  let url = t.url ?? demo.url;
-  try {
-    if (demo.url && t.url) url = new URL(t.url, demo.url).href;
-  } catch {}
+  let url = takeUrl(t.url, demo.url);
+  const file = localPage(url, typeof where === 'string' ? where : where?.dir);
+  if (file) url = pathToFileURL(file).href;
   return {
     name,
     url,
@@ -185,6 +185,21 @@ export const takeSpec = (demo, name, where = {}) => {
     options,
   };
 };
+
+// A screen take's url: its own, resolved against the top-level url when both
+// are there, else whichever is given.
+export const takeUrl = (own, base) => {
+  let url = own ?? base;
+  try {
+    if (base && own) url = new URL(own, base).href;
+  } catch {}
+  return url;
+};
+// A url with no scheme ("figure/app.html") names a page on disk, relative to
+// the demo.json folder (`dir`), and records as a file:// url. Before, such a
+// url could not load at all, so no take that worked reads differently.
+export const hasScheme = (url) => /^[A-Za-z][A-Za-z0-9+.-]*:/.test(url);
+export const localPage = (url, dir) => (typeof url === 'string' && url && dir && !hasScheme(url) ? resolve(dir, url) : null);
 
 // A figure take: the page and how figure time runs. demo.url and the demo's
 // screen capture options don't apply; fps, crf, jpegQuality and encoder do.

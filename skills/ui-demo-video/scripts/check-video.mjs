@@ -25,7 +25,7 @@ import {
   CAMERA_MODES, DEMO_KEYS, KNOWN_TRANSITIONS, SAFE_NAME, SCENE_KEYS, STEP_KEYS, TAKE_KEYS, THEME_KEYS, TOP_KEYS,
   CALLOUT_KEYS, CALLOUT_STYLES, CALLOUT_SIDES, BRACKET_SIDES, CAPTION_KEYS,
   FIGURE_INSTEAD, FIGURE_MARK_KEYS, FIGURE_STEP_KEYS, FIGURE_TAKE_KEYS,
-  clipPath, fillTiming, gapSec, isFigureTake, isNote, resolveSpec, sceneSpans, styleName, takesUsed, STYLE_KEYS,
+  clipPath, fillTiming, gapSec, hasScheme, isFigureTake, isNote, localPage, resolveSpec, sceneSpans, styleName, takeUrl, takesUsed, STYLE_KEYS,
 } from './spec-lib.mjs';
 import { STYLES, TOKEN_GROUPS, flatten, resolveStyle, styleNames, unknownStyleMessage } from './compositor/styles/index.js';
 import { cameraPose, sceneLayout, stripEmphasis } from './compositor/layout.js';
@@ -504,7 +504,17 @@ export function checkDemo(demo, { dir } = {}) {
 function checkDemoInner(demo, dir) {
   const out = { errors: [], warnings: [] };
   if (demo.name !== undefined && !SAFE_NAME.test(str(demo.name))) out.errors.push(`name "${demo.name}" must be letters, digits, dots, dashes or underscores (it names the output files)`);
-  if (demo.url !== undefined) try { new URL(demo.url); } catch { out.errors.push(`url "${demo.url}" is not a full URL like http://localhost:3000`); }
+  // A url with no scheme is a page next to demo.json (it records as file://).
+  const noPage = (url) => {
+    const file = localPage(url, dir);
+    let ok = false;
+    try { ok = !!file && statSync(file).isFile(); } catch {}
+    return file && !ok ? file : null;
+  };
+  if (typeof demo.url === 'string' && demo.url && !hasScheme(demo.url)) {
+    const missing = noPage(demo.url);
+    if (missing) out.errors.push(`url "${demo.url}" has no scheme, so it names a page next to demo.json, but there is no file at ${missing}; give a full URL like http://localhost:3000 or a page that exists`);
+  } else if (demo.url !== undefined) try { new URL(demo.url); } catch { out.errors.push(`url "${demo.url}" is not a full URL like http://localhost:3000`); }
   if (demo.capture !== undefined && !isObj(demo.capture)) out.errors.push('capture must be an object of options');
   else unknown(demo.capture, TAKE_KEYS.filter((k) => !['url', 'duration', 'steps', 'setup', 'pageSetup', 'rehearse'].includes(k)), 'capture', out);
   const takes = isObj(demo.takes) ? demo.takes : {};
@@ -516,7 +526,13 @@ function checkDemoInner(demo, dir) {
     if (isFigureTake(t)) { checkFigureTake(at, t, dir, out); continue; }
     unknown(t, TAKE_KEYS, at, out);
     if (!t.url && !demo.url) out.errors.push(`${at}: no url (give the take one or set "url" at the top of the file)`);
-    else try { new URL(t.url ?? '', demo.url); } catch { out.errors.push(`${at}: url "${t.url}" is not a URL`); }
+    else if (t.url) {
+      const url = takeUrl(t.url, demo.url);
+      if (typeof url === 'string' && !hasScheme(url)) {
+        const missing = noPage(url);
+        if (missing) out.errors.push(`${at}: url "${t.url}" has no scheme, so it names a page next to demo.json, but there is no file at ${missing} (or give a full URL like http://localhost:3000/page)`);
+      } else try { new URL(url); } catch { out.errors.push(`${at}: url "${t.url}" is not a URL`); }
+    }
     if (t.duration !== undefined && !(t.duration > 0)) out.errors.push(`${at}: duration must be seconds`);
     // --hide-floating hides small fixed-position widgets, and toasts are exactly that.
     const floating = t.hideFloating ?? demo.capture?.hideFloating;

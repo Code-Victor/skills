@@ -4,9 +4,8 @@
   "style": "studio",
   "takes": {
     "app": {
-      "url": "http://127.0.0.1:4791/",
-      "_setup": "A screen take needs a URL, and a file:// one would have to be absolute. So the setup serves figure/app.html on 127.0.0.1:4791 with a node one-liner (nothing to install) that stops by itself 30 s after its last request. If one is already up, it is reused.",
-      "setup": "curl -sfo /dev/null http://127.0.0.1:4791/ || { node -e \"const b=require('fs').readFileSync('figure/app.html');let t;const idle=()=>{clearTimeout(t);t=setTimeout(()=>process.exit(),30000)};require('http').createServer((q,r)=>{idle();r.writeHead(200,{'content-type':'text/html; charset=utf-8'});r.end(b)}).listen(4791,'127.0.0.1');idle()\" >/dev/null 2>&1 & sleep 0.5; }",
+      "url": "figure/app.html",
+      "_url": "A url with no scheme is a page on disk, relative to this file's folder. It records as a file:// url, so no server is needed.",
       "duration": 6,
       "_slow": "Recorded 10 times slower than real time so the cursor glides smoothly on a busy machine; leave it out to let the recorder choose.",
       "slow": 10,

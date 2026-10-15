@@ -325,6 +325,25 @@ const launchChrome = async () => {
   return die(`Chrome did not start (${bin}): ${err.trim().split('\n').slice(-3).join(' | ') || 'no DevToolsActivePort after 20 s'}`, 4);
 };
 
+// Open a tab on our Chrome. On a loaded machine Chrome writes its port a
+// while before its DevTools endpoint answers, so a miss is tried again for up
+// to CONNECT_MS while Chrome is still running.
+const CONNECT_MS = 30000;
+const connect = async (port, opts) => {
+  const until = Date.now() + CONNECT_MS;
+  for (;;) {
+    try {
+      return await openTab(port, opts);
+    } catch (e) {
+      const alive = chrome && chrome.proc.exitCode === null && chrome.proc.signalCode === null;
+      if (e.code !== 'NO_CHROME') return die(`could not open a tab: ${e.message}`);
+      if (!alive) return die(`Chrome exited before its DevTools endpoint on port ${port} answered`, 4);
+      if (Date.now() > until) return die(`Chrome started (port ${port}) but its DevTools endpoint did not answer within ${CONNECT_MS / 1000} s; the machine may be overloaded`, 4);
+      await sleep(500);
+    }
+  }
+};
+
 // ---------------------------------------------------------------- page
 
 // Exceptions inside the page are errors here: a frame that threw drew nothing.
@@ -444,9 +463,12 @@ const CLOCK_SOURCE = readFileSync(new URL('./figure-clock.js', import.meta.url),
 // whose video second reaches its `at`. A move with `dur` glides once a frame,
 // with capture.mjs's ease, from where the pointer was (a first move, with
 // nothing before it, jumps). A click is a move, a press and a release; a key
-// is a key down and up. No cursor is drawn. Mark steps are logged with the
-// other marks (see main).
+// is a key down and up. No cursor is drawn. Clicks and keys are logged as
+// events the way capture.mjs logs them (a click at x, y in fractions of the
+// frame with no box; a key by name), so the auto-camera follows them; a move
+// logs nothing. Mark steps are logged with the other marks (see main).
 const ease = (k) => (k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2);
+const inputEvents = [];
 const figureInput = () => {
   const todo = figureSteps.map((s, i) => ({ ...s, i })).filter((s) => !('mark' in s)).sort((a, b) => a.at - b.at || a.i - b.i);
   let pos = null;
@@ -472,11 +494,13 @@ const figureInput = () => {
       } else if (s.click) {
         glide = null;
         pos = px(s.click);
+        inputEvents.push({ type: 'click', t: +v.toFixed(3), x: +s.click[0].toFixed(4), y: +s.click[1].toFixed(4), box: null });
         await mouse('mouseMoved', pos);
         await mouse('mousePressed', pos);
         await mouse('mouseReleased', pos);
         sent = true;
       } else if (s.key) {
+        inputEvents.push({ type: 'key', key: s.key, t: +v.toFixed(3) });
         await tab.send('Input.dispatchKeyEvent', { type: 'keyDown', key: s.key });
         await tab.send('Input.dispatchKeyEvent', { type: 'keyUp', key: s.key });
         sent = true;
@@ -656,11 +680,7 @@ const main = async () => {
   mkdirSync(PREVIEW ? previewDir : dirname(out), { recursive: true });
 
   const port = await launchChrome();
-  try {
-    tab = await openTab(port);
-  } catch (e) {
-    return die(`could not open a tab: ${e.message}`);
-  }
+  tab = await connect(port);
   await preparePage();
   await loadPage();
   const modeName = await detectMode();
@@ -728,6 +748,7 @@ const main = async () => {
   await sink.finish(lengthSec);
   renameSync(tmpOut, out);
   const bytes = statSync(out).size;
+  r.events.push(...inputEvents);
   r.events.sort((a, b) => a.t - b.t);
   const eventsFile = `${out}.events.json`;
   const eventsTmp = `${eventsFile}.${process.pid}.tmp`;
@@ -736,14 +757,15 @@ const main = async () => {
     figure: { mode: mode.name, range, timeline, dpr, viewport: [vw, vh], draft: DRAFT, seekable: info.seekable, ...(clock ? { seed, transitions } : {}) },
   }, null, 1)}\n`);
   renameSync(eventsTmp, eventsFile);
-  say(`events ${eventsFile} (${r.events.length} marks)`);
+  const markCount = r.events.length - inputEvents.length;
+  say(`events ${eventsFile} (${markCount} marks${inputEvents.length ? `, ${inputEvents.length} clicks and keys` : ''})`);
   const sheet = writeSheet(out, lengthSec);
   say(`sheet ${sheet}`);
   await succeed(
     `saved ${out} (${mode.name} mode, ${W}x${H}, ${lengthSec}s, ${N} frames at ${fps} fps, ${distinct} distinct, ${msPerFrame} ms a frame, ${(bytes / 1e6).toFixed(1)} MB, wall ${wallSec().toFixed(1)}s)`,
     {
       file: out, events: eventsFile, sheet, width: W, height: H, durationSec: lengthSec, fps, frames: N, distinctFrames: distinct,
-      msPerFrame, mode: mode.name, draft: DRAFT, dpr, marks: r.events.length, bytes, ...(hashFile ? { hashes: hashFile } : {}),
+      msPerFrame, mode: mode.name, draft: DRAFT, dpr, marks: markCount, ...(inputEvents.length ? { inputs: inputEvents.length } : {}), bytes, ...(hashFile ? { hashes: hashFile } : {}),
       ...(clockStats ? { clock: clockStats } : {}),
     },
   );
