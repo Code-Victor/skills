@@ -286,7 +286,7 @@ screen takes; <what to do instead>`, and a key that is not a key at all gets
 The same keys are checked on the take itself only. The top-level `url` and
 every `capture` option except `fps`, `crf`, `jpegQuality` and `encoder` are
 ignored for a figure take, so a demo with screen takes and a figure take can
-keep its `capture` defaults.
+keep its `capture` defaults. `examples/hybrid.demo.json` mixes the two.
 
 A figure take has two modes. When the page sets `window.__figure` (the hook
 contract in `figure.md`) the recorder calls it for each frame, with figure
@@ -408,7 +408,7 @@ Each run prints one line per stage with its seconds.
 | `camera` | Writes `build/video.json`, then runs `auto-camera.mjs` on it | A take used by a scene has no clip; `autoCamera` on a scene whose clip has no events file; a callout names a mark the events file does not have |
 | `check` | `check-video.mjs` against the real files (it also warns when a callout shows for over 0.3 s where the camera is not looking) | A trim runs past the end of a clip; `aspect` does not match the clip; a file is missing; a callout has no box; a camera key outside its scene |
 | `render` | `compose.mjs`: the whole video on the GPU, then the contact sheet | A file cannot be found or decoded even through a proxy; an unknown scene type or transition; no master was written |
-| `deliver` | `deliver.mjs`: PR copy, captions, chapters, poster, GIF, frozen and black scan | ffmpeg fails. A frozen or black stretch, or a PR copy over the cap, is a warning, not a failure |
+| `deliver` | `deliver.mjs`: PR copy, captions, chapters, poster, GIF, frozen and black scan (scenes that play a figure: black only) | ffmpeg fails. A frozen or black stretch, or a PR copy over the cap, is a warning, not a failure |
 
 When a stage fails the run stops, prints `FAILED at <stage>:` with the
 message, every warning so far, and where the logs are. The warnings that

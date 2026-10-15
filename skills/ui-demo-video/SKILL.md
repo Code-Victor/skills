@@ -141,7 +141,13 @@ A figure take replaces `url` and `steps` with a page and a timeline:
   records figure takes at 30 fps and low resolution. The next run without
   the flag records them again at full quality.
 - **Pace with the figure.** 30 to 45 s, slow into each event, hold the end,
-  and keep something moving past the halfway point. One idea per caption.
+  and keep something moving past the halfway point. One idea per caption,
+  and a mark for each idea, so no caption outlives what it says.
+- **Marks drive the camera and callouts** as `mark` steps do. A mark with an
+  `anchor` has a box the auto-camera can lean in on; `"look": false` keeps it
+  off one. A mark with no anchor only times captions.
+- **Hybrids.** One demo can mix screen takes and figure takes: a clip of the
+  app, then the figure that explains it (`examples/hybrid.demo.json`).
 - **A page with no hook still records**, on a virtual clock: its own idle
   tour plays, the same on every run, and `figureSteps` can steer it with
   timed pointer and key input (`references/figure.md` section 7).
@@ -458,6 +464,9 @@ styles at the same playback position) and delivers nothing: once the person
 picks, run again with `--style <name>`, or put it in `demo.json`. The
 delivery step also scans the master for frozen and black stretches: a still
 run inside a clip scene usually means a trim ran past the end of a recording.
+Scenes that play a figure are only checked for black: a thin figure moving
+slowly looks frozen at the scan's size, and the recorder warns about a truly
+frozen figure take itself.
 
 Where it goes:
 

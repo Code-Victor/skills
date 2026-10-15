@@ -1,0 +1,68 @@
+{
+  "_note": "A hybrid: a screen take of a page and a figure take in one video. Run: node scripts/demo.mjs examples/hybrid.demo.json (copy this file and the figure/ folder out of the skill first, into a folder that survives a restart). Everything here is made up: the app, the build steps, the timings and the figure.",
+  "name": "parallel-build-hybrid",
+  "style": "studio",
+  "takes": {
+    "app": {
+      "url": "http://127.0.0.1:4791/",
+      "_setup": "A screen take needs a URL, and a file:// one would have to be absolute. So the setup serves figure/app.html on 127.0.0.1:4791 with a node one-liner (nothing to install) that stops by itself 30 s after its last request. If one is already up, it is reused.",
+      "setup": "curl -sfo /dev/null http://127.0.0.1:4791/ || { node -e \"const b=require('fs').readFileSync('figure/app.html');let t;const idle=()=>{clearTimeout(t);t=setTimeout(()=>process.exit(),30000)};require('http').createServer((q,r)=>{idle();r.writeHead(200,{'content-type':'text/html; charset=utf-8'});r.end(b)}).listen(4791,'127.0.0.1');idle()\" >/dev/null 2>&1 & sleep 0.5; }",
+      "duration": 6,
+      "_slow": "Recorded 10 times slower than real time so the cursor glides smoothly on a busy machine; leave it out to let the recorder choose.",
+      "slow": 10,
+      "steps": [
+        { "wait": 1.2 },
+        { "click": { "selector": "#run" }, "dur": 0.8 },
+        { "waitFor": { "text": "Built in 2 m 10 s" } },
+        { "mark": "built", "target": { "selector": "#result" } },
+        { "wait": 2.2 }
+      ]
+    },
+    "bench": {
+      "source": "figure",
+      "page": "figure/bench.html",
+      "_note": "The same take as explainer.demo.json: see the notes there.",
+      "marks": [
+        { "id": "lanes-start", "t": 2, "label": "Every lane starts" },
+        { "id": "split", "t": 33, "label": "The work splits" },
+        { "id": "serial-compile", "t": 75, "label": "Serial starts compiling at 1:15" },
+        { "id": "checks-done", "t": 125, "anchor": "[data-tail=\"checks\"]", "label": "Parallel 2 done at 2:05", "look": false },
+        { "id": "saving", "t": 136, "label": "Time saved starts to grow" },
+        { "id": "serial-done", "t": 220, "anchor": "[data-gate=\"serial\"]", "label": "Serial run done: 3:40", "look": false },
+        { "id": "saved", "t": 223, "anchor": "[data-part=\"saved\"]", "label": "1 m 30 s saved", "poster": true, "look": false }
+      ],
+      "timeline": [[0, 0], [2.5, 0], [7, 30], [9, 36], [13.5, 100], [15.5, 119], [17, 125], [20, 130], [22.5, 133], [24, 133], [28.5, 200], [30, 214], [31.5, 220], [34, 223], [39, 223]]
+    }
+  },
+  "transition": "zoom-blur",
+  "transitionSec": 0.5,
+  "scenes": [
+    { "type": "title", "text": "Builds now run on two machines", "subtitle": "The result first, then where the time went", "durationSec": 3.6 },
+    {
+      "type": "clip", "take": "app", "durationSec": 5.5,
+      "_autoCamera": "1.6, not the default 1.8: the push-in frames the button and the result, and this keeps the whole card in view.",
+      "autoCamera": { "zoom": 1.6 },
+      "captions": [{ "atMark": "built", "text": "Two machines: built in 2 m 10 s." }],
+      "callouts": [{ "mark": "built", "label": "1 m 30 s faster", "style": "highlight", "side": "right" }]
+    },
+    {
+      "type": "clip", "take": "bench", "trimStartSec": 2, "durationSec": 36.5,
+      "autoCamera": { "zoom": 1.75, "maxZoom": 1.75, "pad": 2 },
+      "captions": [
+        { "atMark": "lanes-start", "text": "Each machine starts and installs first." },
+        { "atMark": "split", "text": "Lint, types and tests move to Parallel 2." },
+        { "atMark": "serial-compile", "text": "Serial only starts its compile at 1:15." },
+        { "atMark": "checks-done", "text": "Parallel 2 is done at 2:05." },
+        { "atMark": "gate-open", "text": "The compile lane sets the finish: 2:10." },
+        { "atMark": "saving", "text": "From here on, every second is time saved." },
+        { "atMark": "serial-done", "leadSec": 1, "text": "One machine running every step: 3:40." },
+        { "atMark": "saved", "text": "The teal strip is the 1 m 30 s saved." }
+      ],
+      "callouts": [{ "mark": "gate-open", "label": "Parallel run done" }]
+    },
+    {
+      "type": "list", "title": "What changed", "durationSec": 5,
+      "items": ["Builds run on two machines", "Done at 2:10 instead of 3:40", "1 m 30 s saved on every build"]
+    }
+  ]
+}

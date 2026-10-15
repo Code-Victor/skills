@@ -7,15 +7,17 @@
 <style>
 *{box-sizing:border-box}
 html,body{height:100%;margin:0}
-body{display:grid;place-items:center;background:#f6f6f3;color:#1a1a1d;font:16px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
-main{width:min(520px,100% - 32px);padding:32px;border-radius:16px;background:#fff;box-shadow:0 0 0 1px #0000000f,0 12px 32px -12px #00000026}
-h1{margin:0 0 4px;font-size:22px;font-weight:600;letter-spacing:-.01em}
+/* Sizes are in em: 16px on a laptop, larger on a wide screen, so the card
+   stays readable in a recording made at the screen's own size. */
+body{display:grid;place-items:center;background:#f6f6f3;color:#1a1a1d;font:clamp(16px,1.25vw,24px)/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+main{width:min(32.5em,100% - 32px);padding:2em;border-radius:1em;background:#fff;box-shadow:0 0 0 1px #0000000f,0 .75em 2em -.75em #00000026}
+h1{margin:0 0 .18em;font-size:1.375em;font-weight:600;letter-spacing:-.01em}
 p{margin:0;color:#6b6b70}
-button{margin-top:24px;padding:12px 20px;border:0;border-radius:10px;background:#1a1a1d;color:#fff;font:inherit;font-weight:500;cursor:pointer}
+button{margin-top:1.5em;padding:.75em 1.25em;border:0;border-radius:.625em;background:#1a1a1d;color:#fff;font:inherit;font-weight:500;cursor:pointer}
 button:disabled{background:#8a8a8f;cursor:default}
 button:focus-visible{outline:2px solid #3e63dd;outline-offset:2px}
-#result{min-height:30px;margin-top:20px;font-size:20px;font-weight:600;font-variant-numeric:tabular-nums}
-#detail{min-height:24px;font-size:15px}
+#result{width:fit-content;min-height:1.5em;margin-top:1em;font-size:1.25em;font-weight:600;font-variant-numeric:tabular-nums}
+#detail{min-height:1.6em;font-size:.9375em}
 </style>
 </head>
 <body>

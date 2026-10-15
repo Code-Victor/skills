@@ -19,7 +19,8 @@
 // Writes <name>-pr.mp4, <name>.vtt, <name>.srt, <name>-chapters.txt,
 // <name>-poster.png (and <name>.gif). Then scans the master for frozen or
 // black stretches inside clip scenes, which usually mean a trim ran past the
-// end of a recording or a take lost its frames.
+// end of a recording or a take lost its frames (stills are not reported
+// where a figure plays; see scan()).
 //
 // Speed: the PR copy, the poster, the GIF and the scan run at the same time,
 // the PR copy is one encode pass (a quality target with a bitrate ceiling worked
@@ -140,16 +141,29 @@ const writeText = () => {
 const isClip = (s) => s.scene.type === 'clip' || s.scene.type === 'split';
 // Where clips' relative paths start: --public, else the demo folder above build/, else the spec's own.
 const pubDirs = flag('public') ? [resolve(flag('public'))] : [resolve(dirname(flag('spec')), '..'), resolve(dirname(flag('spec')))];
-const figureMarks = (scene) => {
-  if (scene.type !== 'clip' || typeof scene.src !== 'string') return null;
-  for (const d of pubDirs) {
-    try {
-      const ev = JSON.parse(readFileSync(join(d, `${scene.src}.events.json`), 'utf8'));
-      return ev.figure ? (ev.events ?? []).filter((e) => e.type === 'mark' && Number.isFinite(e.t)) : null;
-    } catch {}
+// A clip's events file, from the first of those folders that has one.
+const events = new Map();
+const eventsOf = (src) => {
+  if (typeof src !== 'string') return null;
+  if (!events.has(src)) {
+    let ev = null;
+    for (const d of pubDirs) {
+      try {
+        ev = JSON.parse(readFileSync(join(d, `${src}.events.json`), 'utf8'));
+        break;
+      } catch {}
+    }
+    events.set(src, ev);
   }
-  return null;
+  return events.get(src);
 };
+const figureMarks = (scene) => {
+  if (scene.type !== 'clip') return null;
+  const ev = eventsOf(scene.src);
+  return ev?.figure ? (ev.events ?? []).filter((e) => e.type === 'mark' && Number.isFinite(e.t)) : null;
+};
+// A scene that plays a figure recording: a clip, or either side of a split.
+const playsFigure = (scene) => [scene.src, scene.before?.src, scene.after?.src].some((src) => eventsOf(src)?.figure);
 // A mark's time on the final timeline, if the scene shows it.
 const onTimeline = (span, t) => {
   const at = (t - (span.scene.trimStartSec ?? 0)) / (span.scene.playbackRate ?? 1);
@@ -229,6 +243,10 @@ const makeGif = async () => {
 // Long stills inside clip scenes are the usual sign of a trim past the end of
 // a recording; black frames, of a take that lost its paint. A quarter of the
 // frames at a small size is plenty to see either.
+// Stills are not reported in a scene that plays a figure recording: a thin,
+// low-contrast figure moving slowly looks frozen at 480 px, so most reports
+// there are false. capture-figure.mjs warns about a truly frozen figure take
+// itself, as it records. Black frames are reported in every scene.
 const scan = async () => {
   const r = await exec('ffmpeg', ['-v', 'info', '-i', video, '-vf',
     'fps=15,scale=480:-2:flags=fast_bilinear,freezedetect=n=0.0015:d=2.5,blackdetect=d=0.25:pix_th=0.08', '-an', '-f', 'null', '-']);
@@ -237,7 +255,7 @@ const scan = async () => {
   const issues = [];
   for (const m of log.matchAll(/freeze_start: ([\d.]+)[\s\S]*?freeze_duration: ([\d.]+)/g)) {
     const s = sceneAt(+m[1] + 0.1);
-    if (s && (s.type === 'clip' || s.type === 'split')) issues.push(`still for ${(+m[2]).toFixed(1)}s from ${(+m[1]).toFixed(1)}s in a clip scene (${stripEmphasis(s.caption ?? s.src ?? '')})`);
+    if (s && (s.type === 'clip' || s.type === 'split') && !playsFigure(s)) issues.push(`still for ${(+m[2]).toFixed(1)}s from ${(+m[1]).toFixed(1)}s in a clip scene (${stripEmphasis(s.caption ?? s.src ?? '')})`);
   }
   for (const m of log.matchAll(/black_start:([\d.]+) black_end:([\d.]+)/g)) issues.push(`black from ${(+m[1]).toFixed(1)}s to ${(+m[2]).toFixed(1)}s`);
   return issues;

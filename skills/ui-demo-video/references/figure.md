@@ -72,7 +72,10 @@ Most explainers need a Figure. The recording is cheap next to the drawing: a
 8. **Deliver.** The same outputs as any demo (`SKILL.md`, section 6). The
    poster is the frame at the mark with `"poster": true`. With no such mark
    it is the frame half a second after the last mark (or the last frame, if
-   that comes first). `deliver.mjs --poster <sec>` overrides both.
+   that comes first). `deliver.mjs --poster <sec>` overrides both. The
+   delivery check reports black frames in a figure scene but not still
+   stretches: a thin figure moving slowly looks frozen at the scan's 480 px.
+   The recorder warns about a truly frozen take itself.
 
 ## 4. The contract and the keys
 
@@ -108,10 +111,12 @@ window.__figure = {
   there.
 - **Marks.** `anchor` is a CSS selector: at the mark's frame the recorder
   reads its bounding box for the event, so the camera and callouts can find
-  it. No anchor, no box. A mark fires on the first frame whose figure time
-  reaches `t`; one the timeline never reaches gets a warning and no event.
-  `poster: true` on at most one mark picks the poster frame. `look: false` keeps the camera off a mark, as it does for a
-  `mark` step. `label` is the mark's text.
+  it. A mark with no anchor has no box, so it only times captions. A mark
+  fires on the first frame whose figure time reaches `t`; one the timeline
+  never reaches gets a warning and no event. `poster: true` on at most one
+  mark picks the poster frame. The auto-camera leans in on a mark with a
+  box, as on a `mark` step; `look: false` keeps it off one (a mark a callout
+  uses is framed anyway). `label` is the mark's text.
 
 A mark becomes an event in the clip's events file, the same as a `mark` step
 in a screen recording: `{ type: 'mark', label: <id>, t: <video sec>, box?,
@@ -255,8 +260,12 @@ Rules that hold:
   then sees the thing happen. `leadSec` on an `atMark` caption defaults to
   0.6 (`scenes.md`). When you retime the timeline, `atMark` captions follow
   the marks; an `atSec` caption would not.
-- **One idea per caption.** Under 42 characters a line, two lines at most. If
-  a caption has "and" in it, split it into two marks.
+- **One idea per caption, and a mark for each.** Under 42 characters a line,
+  two lines at most. If a caption has "and" in it, split it into two marks.
+  A caption stays up until the next one starts, so when the figure moves on
+  to a new idea, give it a mark and a caption, or the old line goes stale. A
+  mark that only times a caption needs no anchor (the example's
+  `serial-compile` and `saving`).
 - **Use the `--preview` sheet as a sketch.** One still per beat shows whether
   each beat has something to look at before you spend a full recording on it.
 
@@ -285,6 +294,13 @@ What made the first explainer work, in general terms:
   everything. Check the 1080p frame, not the page at your window size.
 - **One thing moves at a time.** Several moving parts at once leave the eye
   nowhere to go. Move the thing the caption is about.
+- **Lean in past the labels, or not at all.** A lean-in crops everything
+  outside the view. A nameplate, the legend or a stat cut in half reads as a
+  mistake; leaving them out whole reads as a close-up. Check a frame at every
+  lean-in. The example leans in once, on the gate, at 1.75
+  (`"autoCamera": { "zoom": 1.75, "maxZoom": 1.75, "pad": 2 }`; a smaller
+  `pad` lets a tall box take more of the view). At 1.5 it cut the nameplates.
+  Set `"look": false` on marks the camera should leave alone.
 
 ## 7. Clock mode
 
@@ -462,5 +478,10 @@ After recording:
 - **The runner does not open a window.** A figure take uses its own
   headless Chrome, so it does not need `scripts/chrome.sh` and cannot use the
   person's logged-in session. It is for self-contained pages.
-- **Hybrid demos work.** A demo can have figure takes and screen takes
-  together. `examples/hybrid.demo.json` does.
+- **Hybrid demos.** A demo can have figure takes and screen takes together.
+  `examples/hybrid.demo.json` records `figure/app.html` (click Run build,
+  mark the result), then plays the figure that explains it. A screen take
+  needs a URL, and a `file://` one works but must be absolute, so the
+  example serves the page from the take's `setup` with a node one-liner
+  that stops by itself 30 s after its last request. The screen take uses
+  `scripts/chrome.sh`'s browser; the figure take still runs its own.
