@@ -6,7 +6,10 @@
 //   --out <dir>        where to write (default: next to the video)
 //   --max-mb 10        size cap for the PR copy (GitHub: 10 MB on free plans)
 //   --gif 12:6         also a GIF of 6 s starting at 12 s (keep GIFs short)
-//   --poster 8.5       poster frame time (default: a third into the first "After" clip)
+//   --poster 8.5       poster frame time (default: a figure clip's "poster" mark,
+//                      else a third into the first "After" clip)
+//   --public <dir>     where the spec's clips are (default: the folder above
+//                      the spec's build/ folder); figure clips' marks are read there
 //   --encoder x264|vt  how to encode the PR copy (default: x264, the faster one on
 //                      a busy Mac; vt = VideoToolbox, used automatically when
 //                      this ffmpeg has no libx264)
@@ -36,7 +39,7 @@ const flag = (n) => {
   return i >= 0 ? rest[i + 1] : undefined;
 };
 if (!input || !flag('spec')) {
-  console.error('usage: deliver.mjs <demo.mp4> --spec <video.json> [--out dir] [--max-mb 10] [--gif start:dur] [--poster sec] [--encoder x264|vt] [--no-scan] [--json]');
+  console.error('usage: deliver.mjs <demo.mp4> --spec <video.json> [--public dir] [--out dir] [--max-mb 10] [--gif start:dur] [--poster sec] [--encoder x264|vt] [--no-scan] [--json]');
   process.exit(2);
 }
 const JSON_OUT = rest.includes('--json');
@@ -132,9 +135,43 @@ const writeText = () => {
 // ---------------------------------------------------------------- poster
 // The result sells the video, so prefer the first "After" clip over a
 // "Before" one; a clip's middle is usually mid-action, so take a third in.
+// A clip recorded from a figure (its events.json says so) has a better
+// moment: the mark that says "poster": true, else just after its last mark.
 const isClip = (s) => s.scene.type === 'clip' || s.scene.type === 'split';
+// Where clips' relative paths start: --public, else the demo folder above build/, else the spec's own.
+const pubDirs = flag('public') ? [resolve(flag('public'))] : [resolve(dirname(flag('spec')), '..'), resolve(dirname(flag('spec')))];
+const figureMarks = (scene) => {
+  if (scene.type !== 'clip' || typeof scene.src !== 'string') return null;
+  for (const d of pubDirs) {
+    try {
+      const ev = JSON.parse(readFileSync(join(d, `${scene.src}.events.json`), 'utf8'));
+      return ev.figure ? (ev.events ?? []).filter((e) => e.type === 'mark' && Number.isFinite(e.t)) : null;
+    } catch {}
+  }
+  return null;
+};
+// A mark's time on the final timeline, if the scene shows it.
+const onTimeline = (span, t) => {
+  const at = (t - (span.scene.trimStartSec ?? 0)) / (span.scene.playbackRate ?? 1);
+  return at >= 0 && at < span.end - span.start ? span.start + at : null;
+};
+const figurePoster = () => {
+  const figures = spans.map((s) => ({ s, marks: figureMarks(s.scene) })).filter((f) => f.marks?.length);
+  for (const { s, marks } of figures) {
+    const p = marks.find((m) => m.poster === true);
+    const at = p ? onTimeline(s, p.t) : null;
+    if (at !== null) return at;
+  }
+  return null;
+};
 const posterSpan = spans.find((s) => isClip(s) && /after/i.test(s.scene.tag ?? '')) ?? spans.find(isClip);
-const posterAt = +(flag('poster') ?? (posterSpan ? posterSpan.start + (posterSpan.end - posterSpan.start) / 3 : 1));
+const afterLastMark = (span) => {
+  const shown = (span ? figureMarks(span.scene) ?? [] : []).map((m) => onTimeline(span, m.t)).filter((t) => t !== null);
+  // Half a second after the last mark the scene shows, or its last frame when that is sooner.
+  return shown.length ? Math.min(Math.max(...shown) + 0.5, span.end - 1 / (spec.fps || 60)) : null;
+};
+const posterAt = +(flag('poster') ?? figurePoster() ?? afterLastMark(posterSpan) ??
+  (posterSpan ? posterSpan.start + (posterSpan.end - posterSpan.start) / 3 : 1));
 
 // ---------------------------------------------------------------- PR copy
 // Which H.264 encoders this ffmpeg build has.

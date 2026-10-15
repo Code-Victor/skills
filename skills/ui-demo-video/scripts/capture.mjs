@@ -40,12 +40,11 @@
 // (bad step, missing target, empty take), 2 usage, 3 not signed in or sent to
 // another origin (run scripts/chrome.sh --login <url>), 4 no Chrome.
 
-import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import { openTab, otherPages, sleep } from './capture-cdp.mjs';
-import { startEncoder } from './capture-encode.mjs';
+import { startEncoder, writeSheet } from './capture-encode.mjs';
 import { TOOLBAR, cachedRate, pickSlow, screenSize, storeRate } from './capture-env.mjs';
 import { HIDE_SELECTORS, clockScript, cursorScript, hideScript, query } from './capture-page.mjs';
 
@@ -1016,14 +1015,7 @@ writeFileSync(eventsTmp, `${head.slice(0, -2)},\n "cursor": [\n${cursor.map((c) 
 renameSync(eventsTmp, eventsFile);
 say(`events ${eventsFile} (${timeline.length} events, ${cursor.length} cursor samples)`);
 
-if (args.sheet) {
-  const cols = 5, rows = Math.ceil(take.endSec / cols);
-  // Keyframes come every half second, so decoding only those is plenty for a
-  // one-per-second sheet and takes a fraction of the time.
-  spawnSync('ffmpeg', ['-y', '-loglevel', 'error', '-skip_frame', 'nokey', '-i', out,
-    '-vf', `fps=1,scale=480:-1,tile=${cols}x${rows}`, '-frames:v', '1', `${out}.sheet.png`]);
-  say(`sheet ${out}.sheet.png`);
-}
+if (args.sheet) say(`sheet ${writeSheet(out, take.endSec)}`);
 
 const dist = take.fpsDistinct === null ? 'n/a' : take.fpsDistinct.toFixed(0);
 await succeed(

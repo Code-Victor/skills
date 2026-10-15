@@ -7,7 +7,7 @@
 // the old behaviour (Chrome only sends a frame when something repaints)
 // without decoding a held frame again for every repeat.
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 
 // ---------------------------------------------------------------- matroska
 
@@ -144,4 +144,14 @@ export function startEncoder({ out, w, h, fps = 60, crf = 14, encoder = 'x264', 
     },
     abort() { try { ff.kill('SIGKILL'); } catch {} },
   };
+}
+
+// A one-per-second contact sheet of a clip, five frames a row, for reviewing a
+// take without opening it. Keyframes come every half second, so decoding only
+// those is plenty and takes a fraction of the time.
+export function writeSheet(file, durationSec) {
+  const cols = 5, rows = Math.ceil(durationSec / cols);
+  spawnSync('ffmpeg', ['-y', '-loglevel', 'error', '-skip_frame', 'nokey', '-i', file,
+    '-vf', `fps=1,scale=480:-1,tile=${cols}x${rows}`, '-frames:v', '1', `${file}.sheet.png`]);
+  return `${file}.sheet.png`;
 }
