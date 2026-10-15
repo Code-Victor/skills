@@ -109,6 +109,8 @@ delivery work on it too. Captions can be timed to named moments in the figure
 (`atMark`), so they stay in step when the pacing changes. See
 [references/figure.md](skills/ui-demo-video/references/figure.md).
 
+[![The example explainer: one build machine against two, on one time axis](assets/explainer.jpg)](assets/explainer.mp4)
+
 ### Styles
 
 The video can be drawn in one of five looks. The recordings and scenes are the
